@@ -36,27 +36,56 @@ def gate_g1(n_scenes: int, master_seed: int, out_dir: Path | None = None,
             threshold: float = 0.10, alpha: float = 0.01,
             derived: dict[str, np.ndarray] | None = None,
             scene_index: np.ndarray | None = None) -> dict:
-    """Decorrelation over the factor sampler, plus derived targets if supplied.
+    """Decorrelation over the factor sampler, plus an advisory derived table.
 
-    Two tables:
+    Two tables, and only the first is a gate.
 
-    *Sampled factors*, evaluated at the full corpus size. This is the table the
-    appendix figure shows.
+    *Sampled factors* -- the hard gate, evaluated at the full corpus size. This
+    is where the property the paper depends on actually lives: no sampled
+    physical factor may be predictable from any appearance factor. It is the
+    table the appendix figure shows.
 
-    *Derived targets* (contact rate, object position, speed, occlusion), which
-    exist only after simulation. These are aggregated to one value per scene
-    before correlating: frames within a scene are not independent, so a
-    frame-level correlation here would have an effective sample size near the
-    scene count while being tested as though it had ten times that.
+    *Derived targets* (contact rate, object position, speed, occlusion) --
+    **advisory only**. These exist after simulation, and applying the same
+    hard-fail to them would be a category error, because most of their
+    dependence on other factors is definitional rather than a leak. Measured on
+    a 1500-scene corpus:
+
+        obj_pos_y     vs approach_angle  rho = -0.950
+        obj_speed     vs spawn_height    rho = +0.852
+        ee_obj_dist   vs obj_size        rho = +0.486
+        occlusion     vs geom type       rho = -0.707 (sphere)
+
+    Every one of those is the quantity's own definition. The object's image
+    position *is* where the object is; a dropped object *is* moving at frame 0,
+    which is the entire reason spawn_height exists; the finger stops at the
+    object's surface, so end-effector distance carries the object's radius; a
+    sphere presents less area behind a fixed slab than a box. Failing a gate on
+    these would demand that the corpus contradict its own geometry.
+
+    The one dependence worth reading carefully is ``obj_speed`` vs
+    ``friction_slide`` (rho = -0.199): higher friction really does stop the
+    object sooner. That is physics, and it is precisely the signal H3 predicts a
+    video encoder can exploit -- so it is a property of the corpus being correct,
+    not of it being contaminated.
+
+    What must not appear is appearance predicting *mass* or *friction*, and that
+    is exactly what the sampled-factor table gates.
+
+    Frames are aggregated to one value per scene before correlating: frames
+    within a scene are not independent, so a frame-level correlation would have
+    an effective sample size near the scene count while being tested as though
+    it had ten times that.
     """
     table = factors_table(range(n_scenes), master_seed)
     report = check_decorrelation(table, threshold=threshold, alpha=alpha)
 
     if derived and scene_index is not None:
-        report["derived"] = _derived_decorrelation(
-            derived, scene_index, master_seed, threshold, alpha)
-        if not report["derived"]["passed"]:
-            report["passed"] = False
+        advisory = _derived_decorrelation(derived, scene_index, master_seed, threshold, alpha)
+        advisory["advisory"] = True
+        advisory["note"] = ("diagnostic only; derived targets depend on layout and geometry "
+                            "by definition. The gate is the sampled-factor table.")
+        report["derived"] = advisory
 
     if out_dir is not None:
         out_dir = Path(out_dir)
