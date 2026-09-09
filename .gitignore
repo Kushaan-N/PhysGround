@@ -1,0 +1,35 @@
+# Environments
+.venv/
+venv/
+env/
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+
+# Experiment artifacts. Everything under outputs/ is regenerable from code + seed.
+outputs/
+!outputs/.gitkeep
+*.npz
+*.png
+*.jpg
+*.mp4
+*.gif
+
+# Except figures we deliberately check in for the paper.
+!paper/figures/*.png
+!paper/figures/*.pdf
+
+# Caches
+.pytest_cache/
+.ipynb_checkpoints/
+.DS_Store
+.modal/
+wandb/
+*.log
+
+# SLURM
+slurm-*.out
+slurm-*.err
