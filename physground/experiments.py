@@ -1,4 +1,4 @@
-"""Experiments 0 through F (spec 10).
+"""Experiments 0 through G (spec 10, plus H5).
 
 Each experiment writes raw per-item predictions and targets to ``.npz`` and
 nothing else (spec 0.4). Summary tables and figures are regenerated from those
@@ -35,6 +35,7 @@ __all__ = [
     "experiment_d",
     "experiment_e",
     "experiment_f",
+    "experiment_g",
     "EXPERIMENTS",
     "MAIN_GRID_LAYERS",
 ]
@@ -388,6 +389,67 @@ def _video_layers(encoder: str) -> tuple[int, ...]:
     return DEFAULT_LAYERS
 
 
+def experiment_g(seed: int = 0, root: Path | None = None, condition: str = "base",
+                 encoders: Sequence[str] = ("dinov2_b", "random_b"),
+                 layers: Sequence[int] = MAIN_GRID_LAYERS,
+                 views: Sequence[str] = ("cls", "mean"), epochs: int = 60) -> dict:
+    """H5, optional: does probe decodability predict latent-dynamics error?
+
+    Spec 2 marks this a stretch goal to run only after 0-F complete cleanly, and
+    predicts the outcome as "unknown" -- so unlike the rest of the sequence there
+    is no result here that would count as confirmation or refutation.
+
+    For every cell already in the main grid, trains a small next-latent
+    predictor on the same features and the same scene split, then reports its
+    held-out R2 against the stationary baseline alongside that cell's
+    contact-state probe accuracy. The correlation between those two columns is
+    the quantity H5 is about; it is computed in ``summarize``, not here, so the
+    raw per-cell numbers stay available if the summary statistic changes.
+    """
+    from .latent_dynamics import build_transitions, fit_latent_predictor
+    from .probes import LogisticProbe
+    from .stats import balanced_accuracy
+
+    rows: list[dict] = []
+    for encoder in encoders:
+        for layer in layers:
+            for view in views:
+                x, targets, scene_index = feature_module.load_dataset(
+                    encoder, condition, layer, view, root)
+                train_scenes, test_scenes = scene_split(scene_index, seed)
+
+                transitions = build_transitions(x, targets, scene_index)
+                train = frame_mask(transitions.scene_index, train_scenes)
+                test = frame_mask(transitions.scene_index, test_scenes)
+                dynamics = fit_latent_predictor(transitions, train, test,
+                                                epochs=epochs, seed=seed)
+
+                frame_train = frame_mask(scene_index, train_scenes)
+                frame_test = frame_mask(scene_index, test_scenes)
+                contact = np.asarray(targets["contact_state"]).astype(int)
+                probe = LogisticProbe(seed=seed).fit(x[frame_train], contact[frame_train],
+                                                     scene_index[frame_train])
+                accuracy = balanced_accuracy(contact[frame_test], probe.predict(x[frame_test]))
+
+                rows.append({"encoder": encoder, "layer": int(layer), "view": view,
+                             "contact_balanced_accuracy": float(accuracy), **dynamics})
+
+    arrays: dict[str, np.ndarray] = {}
+    for column in ("contact_balanced_accuracy", "r2_vs_stationary", "model_mse",
+                   "stationary_mse", "layer", "latent_dim"):
+        arrays[column] = np.array([r[column] for r in rows], dtype=float)
+    arrays["cell"] = np.array([f"{r['encoder']}|L{r['layer']}|{r['view']}" for r in rows])
+
+    path = _save("G", seed, arrays, root)
+    finite = np.isfinite(arrays["contact_balanced_accuracy"]) & np.isfinite(arrays["r2_vs_stationary"])
+    correlation = (float(np.corrcoef(arrays["contact_balanced_accuracy"][finite],
+                                     arrays["r2_vs_stationary"][finite])[0, 1])
+                   if finite.sum() > 2 else float("nan"))
+    return {"exp": "G", "seed": seed, "path": str(path), "n_cells": len(rows),
+            "pearson_contact_vs_dynamics_r2": correlation,
+            "note": "spec 2 predicts this outcome as unknown; exploratory"}
+
+
 EXPERIMENTS = {
     "A": experiment_a,
     "B": experiment_b,
@@ -395,4 +457,5 @@ EXPERIMENTS = {
     "D": experiment_d,
     "E": experiment_e,
     "F": experiment_f,
+    "G": experiment_g,
 }
