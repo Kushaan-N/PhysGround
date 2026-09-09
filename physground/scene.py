@@ -91,13 +91,43 @@ class ArmSpec:
 ARM = ArmSpec()
 
 
+#: Geom group holding the target, and nothing else. Groups are a pure
+#: visualisation attribute in MJCF -- collision is governed by contype and
+#: conaffinity -- so isolating the target in its own group lets a renderer draw
+#: its unoccluded silhouette without perturbing the physics. That is what makes
+#: an exact occlusion reference measurement possible (see
+#: ``ground_truth.occlusion_fraction_segmentation``).
+#:
+#: It must be 2, not some unused group like 3. ``MjvOption`` defaults to
+#: geomgroup [1,1,1,0,0,0], so groups 3 and above are hidden unless a caller
+#: opts in -- a target placed there would be missing from every rendered frame
+#: in the corpus while the renders otherwise looked completely normal.
+#: ``tests/test_scene.py`` asserts the target is actually drawn under the
+#: default options.
+TARGET_GEOM_GROUP = 2
+
+
 @dataclass(frozen=True)
 class CameraSpec:
-    """Nominal camera pose. Per-scene jitter is applied on top (spec 5.3)."""
-    lookat: tuple[float, float, float] = (0.32, 0.0, 0.08)
-    azimuth_deg: float = 235.0
-    elevation_deg: float = 32.0
-    distance: float = 1.20
+    """Nominal camera pose. Per-scene jitter is applied on top (spec 5.3).
+
+    The azimuth is not arbitrary. The link plane sits 0.19 m above a resting
+    object, and at a low elevation that height difference projects to a large
+    parallax offset, so a camera placed across the workspace from the arm sees
+    the links draped over the target. Measured over representative poses
+    spanning the push, an azimuth of 235 deg hid 38% of the target's
+    camera-facing surface *in the nominally unoccluded condition*. That would
+    have compressed the occlusion covariate H4 depends on and undercut the
+    Experiment A positive control, which requires R^2 > 0.90 on object position.
+
+    Viewing from ~305 deg puts the arm behind the target rather than across it
+    and drops that to 2%, with the arm, its base, and the end-effector all still
+    in frame at every pose (spec 5.1 requires the arm be visible throughout).
+    """
+    lookat: tuple[float, float, float] = (0.34, 0.0, 0.07)
+    azimuth_deg: float = 305.0
+    elevation_deg: float = 34.0
+    distance: float = 1.25
     fovy_deg: float = 45.0
 
 
@@ -217,8 +247,21 @@ def contact_point(factors: dict) -> np.ndarray:
 # Occluder
 # --------------------------------------------------------------------------- #
 
-def occluder_params(factors: dict, cam: CameraSpec = CAMERA, cut_frac: float = 0.60,
-                    stand_frac: float = 0.25) -> dict:
+#: Occluder shape constants, tuned by measuring the realised occlusion fraction
+#: at the contact pose over 50 scenes. The pair below gives a mean of ~0.52 with
+#: sd ~0.20 and essentially no fully-hidden frames. Fully-hidden frames are the
+#: thing to avoid: at occlusion ~1.0 object position stops being decodable too,
+#: and H4 rests on the *contrast* between contact collapsing and position
+#: surviving. An earlier setting produced a mean of 0.76 with 28% of frames
+#: above 0.9, which would have erased that contrast.
+OCCLUDER_CUT_FRAC = 0.42     # fraction of the object's height to hide up to
+OCCLUDER_WIDTH_MULT = 1.6    # half-width in units of object half-extent
+OCCLUDER_STAND_FRAC = 0.25   # position along the contact-point -> camera segment
+
+
+def occluder_params(factors: dict, cam: CameraSpec = CAMERA,
+                    cut_frac: float = OCCLUDER_CUT_FRAC,
+                    stand_frac: float = OCCLUDER_STAND_FRAC) -> dict:
     """Pose and size of the occluding slab (spec 5.5).
 
     The slab sits on the floor a quarter of the way from the contact point
@@ -251,7 +294,7 @@ def occluder_params(factors: dict, cam: CameraSpec = CAMERA, cut_frac: float = 0
     # Perspective foreshortening: the slab is (1-f) of the way from camera to
     # object, so a given world width there subtends more than the same width at
     # the object. Scale the half-width to keep the covered angular span constant.
-    half_width = 2.2 * size * (1.0 - f)
+    half_width = OCCLUDER_WIDTH_MULT * size * (1.0 - f)
 
     ray = cam_pos[:2] - target[:2]
     yaw = math.atan2(ray[1], ray[0]) + math.pi / 2.0   # face normal along the ray
@@ -385,7 +428,7 @@ def build_mjcf(factors: dict, *, occluded: bool, arm: ArmSpec = ARM,
            model.body_mass came out equal to the sampled value. -->
       <geom name="target_geom" type="{obj_type}" size="{_geom_size(obj_type, obj_size)}"
             mass="{mass:.8f}" friction="{obj_friction}" rgba="{_rgba(float(factors['obj_hue']))}"
-            condim="6"/>
+            condim="6" group="{TARGET_GEOM_GROUP}"/>
     </body>
 """)
 
