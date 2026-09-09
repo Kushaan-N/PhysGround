@@ -37,6 +37,7 @@ __all__ = [
     "load_features",
     "load_targets",
     "load_dataset",
+    "clear_target_cache",
     "TARGETS",
     "PER_SCENE_TARGETS",
     "REGRESSION_TARGETS",
@@ -286,11 +287,38 @@ def load_patches(encoder: str, condition: str, layer: int, root: Path | None = N
     return x[order], scene_index[order]
 
 
+#: Memoised ground truth, keyed by (condition, root, scene indices).
+#:
+#: Reading it costs 1.42 s for a 1500-scene corpus, because it opens one
+#: ``gt.npz`` per scene, and the probe grid calls it twice per cell across
+#: dozens of cells -- tens of thousands of file opens to re-read something that
+#: cannot have changed. The cache assumes the corpus is immutable for the life
+#: of the process, which holds because generation and probing are separate
+#: stages; the scene list is part of the key, so a corpus that grew between
+#: calls misses rather than returning a stale answer.
+_TARGET_CACHE: dict[tuple, dict[str, np.ndarray]] = {}
+
+
+def clear_target_cache() -> None:
+    """Drop the memoised ground truth. For tests that regenerate a corpus."""
+    _TARGET_CACHE.clear()
+
+
 def load_targets(condition: str, indices: Iterable[int] | None = None,
                  root: Path | None = None) -> dict[str, np.ndarray]:
-    """Load per-frame ground truth, sorted by ``(scene_index, frame_index)``."""
+    """Load per-frame ground truth, sorted by ``(scene_index, frame_index)``.
+
+    Returns a fresh dict each call so a caller cannot corrupt the cache by
+    reassigning a key; the arrays inside are shared and must be treated as
+    read-only.
+    """
     data_root = Path(root) if root else None
     wanted = list(indices) if indices is not None else scene_indices_for(condition, data_root)
+
+    cache_key = (condition, str(data_root), tuple(wanted))
+    cached = _TARGET_CACHE.get(cache_key)
+    if cached is not None:
+        return dict(cached)
 
     columns: dict[str, list[np.ndarray]] = {}
     scene_column: list[np.ndarray] = []
@@ -308,7 +336,9 @@ def load_targets(condition: str, indices: Iterable[int] | None = None,
     out = {key: np.concatenate(values) for key, values in columns.items()}
     out["scene_index"] = np.concatenate(scene_column)
     order = np.lexsort((out["frame_index"], out["scene_index"]))
-    return {key: value[order] for key, value in out.items()}
+    sorted_out = {key: value[order] for key, value in out.items()}
+    _TARGET_CACHE[cache_key] = sorted_out
+    return dict(sorted_out)
 
 
 def load_dataset(encoder: str, condition: str, layer: int, view: str,
