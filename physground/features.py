@@ -234,7 +234,34 @@ def load_features(encoder: str, condition: str, layer: int, view: str,
     scene_index = np.concatenate(scenes)
     frame_index = np.concatenate(frames)
     order = np.lexsort((frame_index, scene_index))
+    _assert_no_duplicate_rows(scene_index[order], frame_index[order], directory)
     return x[order], scene_index[order], frame_index[order]
+
+
+def _assert_no_duplicate_rows(scene_index: np.ndarray, frame_index: np.ndarray,
+                              directory: Path) -> None:
+    """Refuse to return a shard set that covers some rows twice.
+
+    Shard files are named by index, so re-extracting with a *smaller*
+    ``--n-shards`` leaves the surplus files from the previous run behind. The
+    loader globs the directory, so those stale shards are concatenated with the
+    fresh ones and every row they cover appears twice -- silently. Duplicated
+    rows land on both sides of a scene-level split (they belong to the same
+    scene, so the split itself stays honest) but they reweight the training set
+    and inflate the apparent sample size in every bootstrap.
+    """
+    if scene_index.size == 0:
+        return
+    pairs = np.stack([scene_index, frame_index], axis=1)
+    duplicated = np.zeros(scene_index.size, dtype=bool)
+    duplicated[1:] = (pairs[1:] == pairs[:-1]).all(axis=1)
+    if duplicated.any():
+        example = pairs[np.flatnonzero(duplicated)[0]]
+        raise RuntimeError(
+            f"{directory} yields duplicate rows (e.g. scene {example[0]} frame {example[1]} "
+            f"appears more than once across {scene_index.size} rows). This usually means stale "
+            "shard files from a run with a different --n-shards. Delete the directory and "
+            "re-extract.")
 
 
 def load_patches(encoder: str, condition: str, layer: int, root: Path | None = None,
@@ -253,7 +280,9 @@ def load_patches(encoder: str, condition: str, layer: int, root: Path | None = N
             frames.append(np.asarray(archive["frame_index"]))
     x = np.concatenate(blocks)
     scene_index = np.concatenate(scenes)
-    order = np.lexsort((np.concatenate(frames), scene_index))
+    frame_index = np.concatenate(frames)
+    order = np.lexsort((frame_index, scene_index))
+    _assert_no_duplicate_rows(scene_index[order], frame_index[order], directory)
     return x[order], scene_index[order]
 
 

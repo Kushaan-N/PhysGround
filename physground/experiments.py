@@ -124,8 +124,8 @@ def run_cell(encoder: str, condition: str, layer: int, view: str, seed: int,
 
     # The occlusion covariate travels with the predictions so the H4 figure can
     # bin by it without reopening the corpus.
-    for name, _, _, scenes_eval, mask in evaluations:
-        covariate = _occlusion_for(name, scenes_eval[mask], root, pool_scenes)
+    for name, _, _, _, mask in evaluations:
+        covariate = _occlusion_for(name, mask, root, pool_scenes)
         if covariate is not None:
             out[f"{name}|occlusion_fraction"] = covariate
     return out
@@ -168,7 +168,15 @@ def _matched_evaluation(encoder, condition, layer, view, root, test_scenes, targ
     return condition, x, labels, scene_index, mask
 
 
-def _occlusion_for(condition, scenes, root, pool_scenes):
+def _occlusion_for(condition, mask, root, pool_scenes):
+    """Per-row occlusion fraction for the evaluated rows of one condition.
+
+    Indexed by the evaluation *mask*, not by its scene ids. Both the target
+    table and the feature rows are sorted by ``(scene_index, frame_index)``, so
+    the mask addresses the same rows in both; matching on scene ids instead
+    would silently drop the covariate whenever a scene contributes more than one
+    row, which is every non-pooled case.
+    """
     try:
         table = feature_module.load_targets(condition, root=root)
     except (FileNotFoundError, OSError):
@@ -178,9 +186,10 @@ def _occlusion_for(condition, scenes, root, pool_scenes):
     if pool_scenes:
         first = np.flatnonzero(np.r_[True, table["scene_index"][1:] != table["scene_index"][:-1]])
         table = {k: v[first] for k, v in table.items()}
-    if table["scene_index"].size != scenes.size:
+    values = np.asarray(table["occlusion_fraction"], dtype=float)
+    if values.size != np.asarray(mask).size:
         return None
-    return np.asarray(table["occlusion_fraction"], dtype=float)
+    return values[mask]
 
 
 # --------------------------------------------------------------------------- #
