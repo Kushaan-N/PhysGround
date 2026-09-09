@@ -117,11 +117,17 @@ FACTORS: tuple[FactorSpec, ...] = (
                "How far past the target the end-effector travels, m."),
     FactorSpec("obj_yaw", "layout", "continuous", _uniform(0.0, np.pi / 2),
                "Target yaw at spawn, rad. Kept flat so boxes land on a face."),
-    FactorSpec("distractor_angle", "layout", "continuous", _uniform(0.75, 1.35),
+    # Lower bounds chosen so the distractor is provably never touched, which is
+    # what makes it a control for object-presence rather than a second contact
+    # event (spec 5.1). Worst case is a max-size box: horizontal half-diagonal
+    # 0.09*sqrt(2) = 0.127 m, plus the 0.012 m finger radius, needs 0.139 m of
+    # clearance from the push ray. At 0.22 m and 0.90 rad the perpendicular
+    # distance is 0.22*sin(0.90) = 0.172 m.
+    FactorSpec("distractor_angle", "layout", "continuous", _uniform(0.90, 1.40),
                "Angular offset of the distractor from the push ray, rad."),
     FactorSpec("distractor_side", "layout", "binary", _bernoulli(0.5),
                "Which side of the push ray the distractor sits on."),
-    FactorSpec("distractor_radius", "layout", "continuous", _uniform(0.20, 0.40),
+    FactorSpec("distractor_radius", "layout", "continuous", _uniform(0.22, 0.42),
                "Distractor distance from the arm base, m."),
 
     # ---- appearance: must be decorrelated from everything above ------------
