@@ -242,9 +242,6 @@ def occlusion_curve(exp: str, seed: int, targets: Sequence[str], root: Path | No
     series: dict[str, dict] = {}
 
     for target in targets:
-        cell = _best_cell(arrays, "dinov2_b", target)
-        if cell is None:
-            continue
         prefix = _find_prefix(arrays, "dinov2_b", target, "occluded")
         if prefix is None:
             continue
