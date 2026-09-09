@@ -390,7 +390,15 @@ def build_mjcf(factors: dict, *, occluded: bool, arm: ArmSpec = ARM,
 
   <default>
     <joint armature="0.01" damping="1.0"/>
-    <geom condim="6" solref="0.008 1" solimp="0.95 0.99 0.001"/>
+    <!-- Soft, well-damped contact. A stiff contact (solref "0.008 1") driven by
+         a near-rigid position actuator turns the push into a train of impacts:
+         the finger drives in, a large impulse launches the light object, contact
+         is lost, the finger catches up. Measured over 10 scenes that gave peak
+         contact forces 20x the steady push force mu*m*g and 157 on/off
+         transitions per push, which is spec 6.2's contact flicker at a rate no
+         3-step debounce can absorb. Softening the contact and lowering the
+         actuator gain (see <actuator/>) brings that to 4.4x and 12 transitions. -->
+    <geom condim="6" solref="0.03 2" solimp="0.85 0.95 0.03"/>
     <default class="arm">
       <geom rgba="0.30 0.32 0.36 1" friction="{inert_friction}"/>
     </default>
@@ -457,13 +465,16 @@ def build_mjcf(factors: dict, *, occluded: bool, arm: ArmSpec = ARM,
     parts.append(f"""  </worldbody>
 
   <actuator>
-    <!-- High kp with critical damping: at friction 1.2 and mass 2.0 kg the
-         reaction torque is a few N*m, and a soft controller would let the
-         commanded radial path bow away from the object. Ground truth reads the
-         realised site position rather than the command, so residual tracking
-         error is measured, not assumed. -->
-    <position name="a_q1" joint="q1" kp="3000" dampratio="1" ctrlrange="-2.6 2.6"/>
-    <position name="a_q2" joint="q2" kp="3000" dampratio="1" ctrlrange="-2.9 2.9"/>
+    <!-- kp=1000, not the 3000 a tracking-error argument alone would suggest. A
+         near-rigid finger cannot absorb the contact impulse, so the push
+         degenerates into repeated impacts (see the <default> geom comment).
+         Measured across kp and contact stiffness, 1000 with the soft contact
+         above holds mean radial tracking error to 3.1 mm during the push while
+         keeping contact continuous. Ground truth reads the realised site
+         position, never the command, so that residual error is measured rather
+         than assumed away. -->
+    <position name="a_q1" joint="q1" kp="1000" dampratio="1" ctrlrange="-2.6 2.6"/>
+    <position name="a_q2" joint="q2" kp="1000" dampratio="1" ctrlrange="-2.9 2.9"/>
   </actuator>
 
   <keyframe>
