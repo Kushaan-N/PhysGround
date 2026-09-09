@@ -40,7 +40,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .base import Encoder, register
+from .base import Encoder, pick_device, register
 
 __all__ = ["VJEPA2Encoder"]
 
@@ -64,7 +64,7 @@ class VJEPA2Encoder(Encoder):
 
         self.layers = tuple(int(v) for v in layers)
         self._torch = torch
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = pick_device(device)
 
         self.processor = AutoVideoProcessor.from_pretrained(model_id)
         self.model = AutoModel.from_pretrained(model_id)

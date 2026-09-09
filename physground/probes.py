@@ -256,21 +256,29 @@ class LogisticProbe:
 
 def shuffle_labels_across_scenes(labels: np.ndarray, scene_index: np.ndarray,
                                  seed: int = 0) -> np.ndarray:
-    """Permute label blocks between scenes, preserving the marginal distribution.
+    """Permute labels between scenes *and* within each scene's block.
 
-    Whole scenes trade label vectors, rather than frames being shuffled
-    individually. Two reasons this is the right control:
+    Both permutations are necessary, and each fixes a case the other misses.
 
-    * A per-frame shuffle destroys the within-scene structure as well as the
-      image-label link, so the control task is strictly easier to fail and the
-      selectivity it reports is optimistic.
-    * Per-scene targets like mass are constant within a scene. Shuffling frames
-      individually would leave every scene's label multiset unchanged, so a probe
-      that only identified the scene would still score well and the control would
-      not detect the leak it exists to detect.
+    *Across scenes* handles per-scene targets. ``mass`` and ``friction_slide``
+    are constant within a scene, so shuffling only within a scene would leave
+    every label exactly where it was.
 
-    The control must land at chance. If it does not, features are leaking scene
-    identity, which is nearly always a split bug (spec 7.4).
+    *Within a scene* handles per-frame targets. Frames are captured at fixed
+    phases (spec 5.2), so ``contact_state`` is literally
+    ``[0,0,0,1,1,1,1,0,0,0]`` in every scene and ``ee_obj_dist`` follows the
+    same stereotyped arc. Swapping whole blocks between scenes therefore
+    permutes identical vectors and changes nothing: measured on the pilot, a
+    block-only control scored 0.869 balanced accuracy on ``contact_state`` and
+    R2 0.688 on ``ee_obj_dist`` -- it was silently re-running the real task and
+    reporting it as a control.
+
+    Together they preserve the label multiset exactly while breaking the link
+    between an image and its label. What they deliberately preserve is
+    scene-level *memorisability*: each scene keeps a fixed label vector, so if a
+    scene appeared on both sides of the split a probe could still learn it and
+    the control would rise above chance. That is precisely the leak this control
+    exists to detect (spec 7.4, 8.5).
     """
     labels = np.asarray(labels)
     scene_index = np.asarray(scene_index)
@@ -279,22 +287,17 @@ def shuffle_labels_across_scenes(labels: np.ndarray, scene_index: np.ndarray,
     boundaries = np.flatnonzero(np.r_[True, scenes[1:] != scenes[:-1]])
     blocks = np.split(order, boundaries[1:])
 
-    sizes = {len(b) for b in blocks}
     rng = np.random.default_rng(seed)
     permutation = rng.permutation(len(blocks))
 
     shuffled = labels.copy()
-    if len(sizes) == 1:
-        # Uniform block size (the corpus always has 10 frames per scene): swap
-        # whole vectors, preserving each scene's internal temporal profile.
-        for destination, source in enumerate(permutation):
-            shuffled[blocks[destination]] = labels[blocks[source]]
-    else:
-        # Ragged blocks: fall back to broadcasting one drawn value per scene,
-        # which still preserves the marginal over scenes.
-        for destination, source in enumerate(permutation):
-            donor = labels[blocks[source]]
-            shuffled[blocks[destination]] = donor[np.arange(len(blocks[destination])) % donor.size]
+    for destination, source in enumerate(permutation):
+        donor = labels[blocks[source]]
+        target_rows = blocks[destination]
+        # Resample positions so ragged blocks still fill, then shuffle within.
+        if donor.size != target_rows.size:
+            donor = donor[np.arange(target_rows.size) % donor.size]
+        shuffled[target_rows] = rng.permutation(donor)
     return shuffled
 
 

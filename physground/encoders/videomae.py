@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import numpy as np
 
-from .base import Encoder, register
+from .base import Encoder, pick_device, register
 
 __all__ = ["VideoMAEEncoder", "repair_attention_biases"]
 
@@ -121,7 +121,7 @@ class VideoMAEEncoder(Encoder):
 
         self.layers = tuple(int(v) for v in layers)
         self._torch = torch
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = pick_device(device)
 
         self.processor = AutoImageProcessor.from_pretrained(model_id)
         self.model = VideoMAEModel.from_pretrained(model_id)

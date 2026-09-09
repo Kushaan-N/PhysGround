@@ -14,7 +14,8 @@ from typing import Callable, Iterable
 
 import numpy as np
 
-__all__ = ["Encoder", "register", "get_encoder", "available_encoders", "IMAGENET_MEAN", "IMAGENET_STD"]
+__all__ = ["Encoder", "register", "get_encoder", "available_encoders", "pick_device",
+           "IMAGENET_MEAN", "IMAGENET_STD"]
 
 #: ImageNet statistics. DINOv2, VideoMAE, and V-JEPA 2 all normalise with these;
 #: each encoder module nonetheless reads them from its own checkpoint's
@@ -110,6 +111,26 @@ def available_encoders() -> list[str]:
 # --------------------------------------------------------------------------- #
 # Shared helpers
 # --------------------------------------------------------------------------- #
+
+def pick_device(requested: str | None = None) -> str:
+    """Best available torch device, preferring CUDA, then Apple MPS, then CPU.
+
+    MPS matters only for local development on Apple silicon, where it makes the
+    difference between a pilot extraction taking minutes and taking an hour. The
+    cluster and Modal paths both land on CUDA. Features are identical up to
+    float32 rounding either way, which Gate G4 already bounds as irrelevant to a
+    linear probe.
+    """
+    import torch
+
+    if requested:
+        return requested
+    if torch.cuda.is_available():
+        return "cuda"
+    if getattr(torch.backends, "mps", None) is not None and torch.backends.mps.is_available():
+        return "mps"
+    return "cpu"
+
 
 def to_normalised_tensor(frames: np.ndarray, mean: Iterable[float], std: Iterable[float],
                          size: int | None = None, device: str = "cpu"):

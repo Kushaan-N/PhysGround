@@ -13,7 +13,8 @@ from __future__ import annotations
 
 import numpy as np
 
-from .base import IMAGENET_MEAN, IMAGENET_STD, Encoder, pool_tokens, register, to_normalised_tensor
+from .base import (IMAGENET_MEAN, IMAGENET_STD, Encoder, pick_device, pool_tokens,
+                   register, to_normalised_tensor)
 
 __all__ = ["DinoV2Encoder"]
 
@@ -38,7 +39,7 @@ class DinoV2Encoder(Encoder):
 
         self.layers = tuple(int(v) for v in layers)
         self.patch_layers = tuple(int(v) for v in patch_layers)
-        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = pick_device(device)
         self._torch = torch
 
         if not pretrained:
