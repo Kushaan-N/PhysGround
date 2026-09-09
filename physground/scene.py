@@ -55,6 +55,7 @@ __all__ = [
     "object_position",
     "distractor_position",
     "contact_point",
+    "occlusion_anchor",
     "occluder_params",
     "build_mjcf",
 ]
@@ -232,14 +233,30 @@ def distractor_position(factors: dict) -> np.ndarray:
 
 
 def contact_point(factors: dict) -> np.ndarray:
-    """Where the finger is expected to first touch the target.
-
-    Used only to place the occluder. It is a prediction from the sampled layout,
-    not a measurement — the realised contact point comes out of the rollout.
-    """
+    """Where the finger first touches the target. Predicted from layout, not measured."""
     size = float(factors["obj_size"])
     theta = float(factors["approach_angle"])
     r = float(factors["obj_radius"]) - size - ARM.finger_radius
+    return np.array([r * math.cos(theta), r * math.sin(theta), resting_height(size, factors["obj_geom_type"])])
+
+
+def occlusion_anchor(factors: dict) -> np.ndarray:
+    """Midpoint of the contact interface's travel during the push.
+
+    The occluder is anchored here rather than at the first contact point. The
+    interface does not stay put: it advances a full ``push_dist`` (0.08-0.18 m)
+    while contact is held, which is several object widths. Measured with the
+    slab at first contact, occlusion over the contact frames fell from 0.58 at
+    first contact to 0.06 at last -- so the frames H4 is actually about were
+    barely occluded at all, and the treatment was strongest on frames where
+    contact was absent.
+
+    Anchoring at the midpoint and widening the slab to span the traversal keeps
+    the contact interface behind it for the whole push.
+    """
+    size = float(factors["obj_size"])
+    theta = float(factors["approach_angle"])
+    r = float(factors["obj_radius"]) - size + 0.5 * float(factors["push_dist"])
     return np.array([r * math.cos(theta), r * math.sin(theta), resting_height(size, factors["obj_geom_type"])])
 
 
@@ -254,9 +271,10 @@ def contact_point(factors: dict) -> np.ndarray:
 #: and H4 rests on the *contrast* between contact collapsing and position
 #: surviving. An earlier setting produced a mean of 0.76 with 28% of frames
 #: above 0.9, which would have erased that contrast.
-OCCLUDER_CUT_FRAC = 0.42     # fraction of the object's height to hide up to
-OCCLUDER_WIDTH_MULT = 1.6    # half-width in units of object half-extent
-OCCLUDER_STAND_FRAC = 0.25   # position along the contact-point -> camera segment
+OCCLUDER_CUT_FRAC = 0.42       # fraction of the object's height to hide up to
+OCCLUDER_SIZE_MULT = 1.25      # half-width contribution per object half-extent
+OCCLUDER_TRAVEL_MULT = 0.55    # half-width contribution per unit of push travel
+OCCLUDER_STAND_FRAC = 0.15     # position along the anchor -> camera segment
 
 
 def occluder_params(factors: dict, cam: CameraSpec = CAMERA,
@@ -279,7 +297,7 @@ def occluder_params(factors: dict, cam: CameraSpec = CAMERA,
     the right neighbourhood.
     """
     cam_pos = camera_position(factors, cam)
-    target = contact_point(factors)
+    target = occlusion_anchor(factors)
     size = float(factors["obj_size"])
 
     z_cut = cut_frac * 2.0 * size          # height on the object to hide up to
@@ -294,7 +312,10 @@ def occluder_params(factors: dict, cam: CameraSpec = CAMERA,
     # Perspective foreshortening: the slab is (1-f) of the way from camera to
     # object, so a given world width there subtends more than the same width at
     # the object. Scale the half-width to keep the covered angular span constant.
-    half_width = OCCLUDER_WIDTH_MULT * size * (1.0 - f)
+    # Wide enough to span the interface's whole traversal, not just the object.
+    # A slab sized to the object alone is passed in a fraction of the push.
+    half_width = (OCCLUDER_SIZE_MULT * size
+                  + OCCLUDER_TRAVEL_MULT * float(factors["push_dist"])) * (1.0 - f)
 
     ray = cam_pos[:2] - target[:2]
     yaw = math.atan2(ray[1], ray[0]) + math.pi / 2.0   # face normal along the ray
@@ -407,7 +428,7 @@ def build_mjcf(factors: dict, *, occluded: bool, arm: ArmSpec = ARM,
   <worldbody>
     <light name="key" pos="{light[0]:.4f} {light[1]:.4f} {light[2]:.4f}"
            dir="0 0 -1" diffuse="0.7 0.7 0.7" specular="0.1 0.1 0.1" castshadow="false"/>
-    <geom name="floor" type="plane" size="3 3 0.1" pos="0 0 0"
+    <geom name="floor" type="plane" size="12 12 0.1" pos="0 0 0"
           rgba="{gray:.4f} {gray:.4f} {gray + 0.01:.4f} 1" friction="{inert_friction}" condim="6"/>
     <camera name="main" pos="{cam_pos[0]:.6f} {cam_pos[1]:.6f} {cam_pos[2]:.6f}"
             xyaxes="{' '.join(f'{v:.6f}' for v in xyaxes)}" fovy="{cam.fovy_deg}"/>
