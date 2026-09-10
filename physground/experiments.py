@@ -36,6 +36,7 @@ __all__ = [
     "experiment_e",
     "experiment_f",
     "experiment_g",
+    "experiment_spatial",
     "EXPERIMENTS",
     "MAIN_GRID_LAYERS",
 ]
@@ -470,6 +471,67 @@ def experiment_g(seed: int = 0, root: Path | None = None, condition: str = "base
             "note": "spec 2 predicts this outcome as unknown; exploratory"}
 
 
+def experiment_spatial(seed: int = 0, root: Path | None = None, condition: str = "base",
+                      encoder: str = "dinov2_b", layers: Sequence[int] = (8, 11),
+                      epochs: int = 30) -> dict:
+    """Spatial contact probe on patch tokens (spec 8.3).
+
+    A per-patch linear readout, max-pooled over patches. It asks whether contact
+    is encoded *somewhere spatially* even where the pooled views wash it out --
+    which is the first thing a reviewer will ask about a null on pooled features,
+    and the reason spec 8.3 requires it.
+
+    Registered as "S" rather than folded into Experiment D because it needs the
+    patch-token cache, which is ~31 GB and is skipped by default
+    (``--no-patches``). A run without that cache raises a clear instruction
+    instead of silently reporting nothing.
+
+    The readout stays linear in the patch features; only the pooling is
+    nonlinear, which keeps this a localisation test rather than a more powerful
+    probe that would undercut the linear-only discipline of spec 3.1.
+    """
+    from .probes import spatial_contact_probe
+    from .stats import auroc, balanced_accuracy
+
+    arrays: dict[str, np.ndarray] = {}
+    rows = []
+    for layer in layers:
+        try:
+            patches, scene_index = feature_module.load_patches(encoder, condition, layer, root)
+        except (FileNotFoundError, KeyError) as exc:
+            raise FileNotFoundError(
+                f"no patch tokens for {encoder} layer {layer}. Re-run extraction without "
+                f"--no-patches; the spatial probe of spec 8.3 cannot run on pooled views."
+            ) from exc
+
+        targets = feature_module.load_targets(condition, root=root)
+        if not np.array_equal(targets["scene_index"], scene_index):
+            raise RuntimeError("patch tokens and targets do not correspond")
+
+        train_scenes, test_scenes = scene_split(scene_index, seed)
+        train = frame_mask(scene_index, train_scenes)
+        test = frame_mask(scene_index, test_scenes)
+        labels = np.asarray(targets["contact_state"], dtype=float)
+
+        scores = spatial_contact_probe(patches[train], labels[train], patches[test],
+                                       epochs=epochs, seed=seed)
+        predictions = (scores > 0).astype(int)
+        truth = labels[test].astype(int)
+
+        cell = cell_key(encoder, condition, layer, "patch_maxpool", task="spatial")
+        arrays[f"{cell}|{condition}|contact_state|y_true"] = truth
+        arrays[f"{cell}|{condition}|contact_state|y_pred"] = predictions
+        arrays[f"{cell}|{condition}|contact_state|y_score"] = scores
+        arrays[f"{cell}|{condition}|contact_state|scene_index"] = scene_index[test]
+        rows.append({"layer": int(layer),
+                     "balanced_accuracy": float(balanced_accuracy(truth, predictions)),
+                     "auroc": float(auroc(truth, scores))})
+
+    path = _save("S", seed, arrays, root)
+    return {"exp": "S", "seed": seed, "path": str(path), "layers": rows,
+            "note": "spec 8.3; compare against the pooled-view contact probe in Exp D"}
+
+
 EXPERIMENTS = {
     "A": experiment_a,
     "B": experiment_b,
@@ -478,4 +540,5 @@ EXPERIMENTS = {
     "E": experiment_e,
     "F": experiment_f,
     "G": experiment_g,
+    "S": experiment_spatial,
 }

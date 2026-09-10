@@ -22,16 +22,21 @@ __version__ = "0.1.0"
 
 _LAZY = {
     "encoders",
+    "experiments",
     "factors",
     "features",
     "figures",
+    "gates",
     "ground_truth",
+    "latent_dynamics",
     "paths",
     "probes",
+    "render",
     "rollout",
     "scene",
     "splits",
     "stats",
+    "summarize",
 }
 
 __all__ = sorted(_LAZY) + ["__version__"]
