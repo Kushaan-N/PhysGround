@@ -89,7 +89,6 @@ volume = modal.Volume.from_name(VOLUME_NAME, create_if_missing=True)
 def generate_shard(shard_id: int, n_shards: int, n_scenes: int, master_seed: int,
                    condition: str = "base") -> dict:
     """Generate one shard of the corpus."""
-    import os
     import sys
     sys.path.insert(0, "/root/physground_repo")
     sys.path.insert(0, "/root/physground_repo/scripts")

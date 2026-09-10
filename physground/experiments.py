@@ -17,7 +17,7 @@ every results file capable of executing code on load.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Iterable, Sequence
+from typing import Sequence
 
 import numpy as np
 
@@ -372,8 +372,6 @@ def experiment_f(seed: int = 0, root: Path | None = None, condition: str = "base
     difference in effective sample size would be indistinguishable from a
     difference in representation.
     """
-    from .encoders import get_encoder  # noqa: F401  (registry side effects)
-
     arrays: dict[str, np.ndarray] = {}
     cells: list[str] = []
 

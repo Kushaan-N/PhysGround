@@ -15,7 +15,6 @@ project import (spec 14, 17.6).
 from __future__ import annotations
 
 import argparse
-import os
 
 
 # Shared with preflight_render so both entry points make the same choice, and

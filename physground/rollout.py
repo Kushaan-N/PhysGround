@@ -28,7 +28,6 @@ a second full rollout.
 
 from __future__ import annotations
 
-import math
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any

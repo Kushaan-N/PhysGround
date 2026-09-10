@@ -81,7 +81,7 @@ def main() -> None:
     if main_rows:
         for view in ("cls", "mean"):
             main_result_figure(main_rows, figures_dir / f"fig2_main_{view}.png", view=view)
-        print(f"[figures] wrote fig2_main_*.png", flush=True)
+        print("[figures] wrote fig2_main_*.png", flush=True)
 
     # ---- Figure 3: frame versus video (H3) ------------------------------- #
     video_rows = [r for r in all_rows if r["exp"] == "F"]

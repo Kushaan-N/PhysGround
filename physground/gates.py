@@ -19,7 +19,7 @@ from typing import Sequence
 import numpy as np
 
 from . import paths as P
-from .factors import APPEARANCE, FACTORS, LAYOUT, PHYSICAL, check_decorrelation, factors_table
+from .factors import check_decorrelation, factors_table
 
 __all__ = ["gate_g1", "gate_g2", "gate_g3", "gate_g4", "GateFailure"]
 

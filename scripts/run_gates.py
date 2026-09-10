@@ -20,8 +20,6 @@ configure_gl()
 
 import json  # noqa: E402
 
-import numpy as np  # noqa: E402
-
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__,

@@ -20,8 +20,6 @@ if "MUJOCO_GL" not in os.environ and sys.platform != "darwin":
 if os.environ.get("MUJOCO_GL") == "osmesa":
     os.environ.setdefault("PYOPENGL_PLATFORM", "osmesa")
 
-import tempfile  # noqa: E402
-
 import pytest  # noqa: E402
 
 
