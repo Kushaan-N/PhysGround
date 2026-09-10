@@ -166,12 +166,22 @@ for s in $(seq 0 15); do
 done; wait
 
 # 3. Features. Drop --no-patches for dinov2_b/base if you want Experiment S.
-for enc in dinov2_b random_b raw_pixel videomae_b vjepa2; do
+for enc in dinov2_b random_b raw_pixel; do
   for cond in base occluded; do
     for s in $(seq 0 7); do
       python scripts/extract_features.py --encoder $enc --condition $cond \
           --shard $s --n-shards 8 --no-patches
     done
+  done
+done
+# Video encoders are used only by Experiment F, which is base-only (a video
+# encoder emits one embedding per scene, so per-frame targets are undefined for
+# it and the occlusion analysis cannot use it). Extracting them for `occluded`
+# costs ~15 min and nothing reads the result.
+for enc in videomae_b vjepa2; do
+  for s in $(seq 0 3); do
+    python scripts/extract_features.py --encoder $enc --condition base \
+        --shard $s --n-shards 4 --no-patches
   done
 done
 
@@ -188,7 +198,67 @@ python scripts/make_figures.py --seeds 0,1,2,3,4
 SLURM equivalents are in `slurm/*.sbatch`; Modal in `modal_app.py`
 (`modal run modal_app.py`).
 
-### 4.5 Timings
+### 4.5 Where everything lives, and what does *not* come with the clone
+
+**Nothing under `outputs/` is in git.** The repo tracks code and documents only;
+the pilot corpus, features, and results lived on the machine that produced them
+and are gone. Every number in `RESULTS_pilot.md` is reproducible from `main`
+plus a seed, but you have to regenerate it. Budget for that — it is §4.4 in
+full, not a download.
+
+**`PHYSGROUND_DATA` is the single knob for where output goes.** Unset,
+everything lands in `./outputs/`. Set it, and every path follows, with no call
+site hard-coding anything:
+
+```bash
+export PHYSGROUND_DATA=/mnt/data/physground     # a mounted volume, not the boot disk
+```
+
+This is the only thing Modal overrides (`modal_app.py` points it at `/data`).
+On a VM with a small root disk and a big attached volume, set it before anything
+else — the corpus and patch tokens are what fill a disk.
+
+Layout underneath it:
+
+```
+$PHYSGROUND_DATA/
+  corpus/{base,occluded}/{00000,00001,...}/
+      frames.npz     10 PNG-packed frames
+      gt.npz         per-frame ground truth, frame-aligned
+      factors.json   sampled factors + QA record for the scene
+  features/{encoder}/{condition}/
+      shard_0000.npz        pooled views, all layers, fp16
+      shard_0000_patch.npz  patch tokens (only if extracted without --no-patches)
+  results/{A..G,S}/seed_00/raw.npz   raw per-item predictions — the deliverable
+  gates/          decorrelation.csv, contact_sheet.png, gate_g*.json
+  tables/         exp_*_summary.csv, hypothesis_tests.csv
+  figures/        fig1..fig4 png
+```
+
+**Two different things are called `--seed`.** On `generate_corpus.py` it is the
+**master seed** that determines the corpus, and it must stay fixed across every
+shard and both conditions or the matched occlusion pairs stop matching. On
+`run_probes.py` it is the **probe seed**, which only chooses the train/test scene
+partition; spec §3.5 wants five of those over one fixed corpus.
+
+### 4.6 Makefile shortcuts
+
+`make help` lists them. The useful ones:
+
+| target | does |
+|---|---|
+| `make preflight` | render backend identity + timing check |
+| `make pilot` | 50-scene pilot, then gates G1–G3 |
+| `make corpus` | full corpus, both conditions |
+| `make features` | all encoders, both conditions, no patch tokens |
+| `make probes` | A,B as kill-switches, then C,D,E over `$(SEEDS)` |
+| `make figures` | regenerate every table and figure |
+| `make test` | the 81 tests |
+| `make clean-outputs` | delete everything regenerable; never touches code |
+
+Override the defaults inline: `N_BASE=3000 SEEDS=0,1,2,3,4 make probes`.
+
+### 4.7 Timings
 
 Measured on Apple M3 Pro, single process, with hardware GL and MPS. **Linux VM
 numbers will differ** — generation is slower under software rendering, extraction
@@ -357,7 +427,45 @@ highest-value change to the scene design, and it is not yet implemented.
 
 ---
 
-## 8. Suggested order of work
+## 8. Reading the raw results yourself
+
+Every experiment writes one `results/{exp}/seed_XX/raw.npz` holding raw per-item
+predictions and nothing else (spec §0.4). Tables and figures are recomputed from
+those, so you can revise a statistic, re-seed a bootstrap, or apply a different
+correction without re-running a model.
+
+Keys are flat strings — `.npz` has no hierarchy, and building one out of pickled
+objects would let a results file execute code on load. The format is eight
+`|`-separated fields:
+
+```
+encoder | train_condition | Llayer | view | task | eval_condition | target | field
+```
+
+- `task` — `real`, `control` (selectivity), `transfer` / `matched` (Exp E),
+  `scene_pooled` (Exp F), `spatial` (Exp S)
+- `eval_condition` — which condition these rows were *evaluated* on, which for
+  Exp E differs from the condition the probe was *trained* on
+- `field` — `y_true`, `y_pred`, `y_score` (classification only), `scene_index`
+
+A few keys have fewer fields and are metadata, not predictions:
+`ridge_alpha`, `ridge_targets`, `logistic_C|{target}`, and
+`{eval_condition}|occlusion_fraction`. The parser skips anything that is not
+eight fields, so adding more is safe.
+
+```python
+from physground import summarize as S
+
+rows = S.summarize_experiment("D", seed=0)        # bootstrap CI per cell
+S.compare_to_baseline("D", 0, "dinov2_b", "random_b", "log_mass")   # paired + TOST
+S.occlusion_curve("E", 0, ("contact_state", "obj_pos_x"))           # H4, paired
+```
+
+`summarize.py` imports no mujoco and needs no GPU, so analysis runs anywhere.
+
+---
+
+## 9. Suggested order of work
 
 1. **Full corpus + re-check Experiment A.** The only open correctness question.
    If the positive control still misses 0.90 at 3,000 scenes, stop and diagnose.
@@ -371,7 +479,7 @@ highest-value change to the scene design, and it is not yet implemented.
 
 ---
 
-## 9. Things I would check first if something looks wrong
+## 10. Things I would check first if something looks wrong
 
 - Run `pytest tests/ -q`. 81 tests, 8 s, no downloads. If any fail, fix that
   before trusting a number.
