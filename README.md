@@ -27,16 +27,40 @@ network.
 
 ## Hypotheses
 
-| | Claim | Predicted |
-|---|---|---|
-| **H1** | Geometric and kinematic state (object position, end-effector distance, support) is linearly decodable | confirmed |
-| **H2** | Mass and friction are **not** decodable from single-frame encoders | confirmed — *this is a predicted refutation* |
-| **H3** | Video encoders partially recover friction, and less so mass, from post-contact deceleration | partially confirmed |
-| **H4** | Contact state degrades disproportionately under occlusion | confirmed — *the finding with consequences for manipulation* |
+| | Claim | Predicted | Pilot (1500+500 scenes, 1 seed) |
+|---|---|---|---|
+| **H1** | Geometric and kinematic state (object position, end-effector distance, support) is linearly decodable | confirmed | **confirmed** — object position +0.45 R² over random-init |
+| **H2** | Mass and friction are **not** decodable from single-frame encoders | confirmed — *a predicted refutation* | **confirmed** — mass TOST-equivalent to random init |
+| **H3** | Video encoders partially recover friction, and less so mass, from post-contact deceleration | partially confirmed | not yet run |
+| **H4** | Contact state degrades disproportionately under occlusion | confirmed | **refuted** — contact is the *most* robust; see below |
 
 H2 and H4 are the point. Several probes are **expected to land at chance**, and
 a low number there is the result, not a bug to fix. Only the designated positive
 controls (§9.1 of `spec.md`) warrant investigation when they come back low.
+
+Full pilot numbers, including the gates and the kill-switches, are in
+[`RESULTS_pilot.md`](RESULTS_pilot.md).
+
+### H4 came out backwards, and the reason is the interesting part
+
+Contact was predicted to degrade most under occlusion. It degrades *least* —
+retaining 0.83 of its skill while object position retains 0.09. Training the
+same probe *within* the occluded condition then recovers almost everything
+(object position 0.124 → 0.803), so the state is still in the frozen
+representation: the transfer number was measuring a linear readout pointed at
+the wrong place, not an encoder that discarded information.
+
+The occluded condition as specified confounds two treatments — hiding part of
+the target, and adding a large object the probe has never seen. Retained skill
+*rises* with occlusion fraction rather than falling, which is what gives it
+away. A v2 design should put the occluder in both conditions and vary only where
+it stands, so the distribution is matched and only the occlusion differs.
+
+For a latent world model the finding is arguably sharper than the hypothesis it
+replaces: a dynamics model trained on clean observations fails under occlusion
+not because the encoder stops representing the world, but because its readout is
+not robust to the scene changing. That is a different claim, and a fixable
+problem.
 
 ---
 
