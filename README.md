@@ -151,9 +151,10 @@ extraction and nothing else.
 ## Repository layout
 
 ```
-spec.md          the source of truth (v1)
-prereg.md        effect size, layer set, baselines — committed before Exp D
-DEVIATIONS.md    every departure from the spec, with the measurement behind it
+spec.md            the source of truth (v1)
+prereg.md          effect size, layer set, baselines — committed before Exp D
+DEVIATIONS.md      every departure from the spec, with the measurement behind it
+RESULTS_pilot.md   pilot findings, including the H4 refutation
 
 physground/
   factors.py     factor definitions, deterministic sampling, Gate G1
@@ -166,7 +167,7 @@ physground/
   splits.py      scene-level splitting, matched-pair handling
   stats.py       cluster bootstrap, Holm-Bonferroni, TOST
   gates.py       G1-G4
-  experiments.py Experiments A-F
+  experiments.py Experiments A-F, plus G (H5) and S (spatial probe)
   summarize.py   raw arrays -> tables, tests, figures
   encoders/      dinov2, random_init, raw_pixel, videomae, vjepa2
 

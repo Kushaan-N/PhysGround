@@ -21,7 +21,8 @@ import json
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__,
                                      formatter_class=argparse.RawDescriptionHelpFormatter)
-    parser.add_argument("--exp", required=True, help="A|B|C|D|E|F, or a comma-separated list")
+    parser.add_argument("--exp", required=True,
+                        help="A|B|C|D|E|F|G|S, or a comma-separated list. G is the optional H5 latent-dynamics probe; S is the spatial contact probe of spec 8.3 and needs the patch-token cache.")
     parser.add_argument("--seed", default="0",
                         help="probe seed(s); spec 3.5 asks for 5 per reported cell")
     parser.add_argument("--condition", default="base")
