@@ -1,8 +1,8 @@
 # Pilot results
 
 **Corpus:** 1,500 base + 500 occluded scenes (the spec's target is 3,000 + 1,000),
-master seed 0, one probe seed. Encoders: `dinov2_b`, `random_b`, `raw_pixel`.
-Video encoders (Experiment F) not yet run.
+master seed 0, one probe seed. Encoders: `dinov2_b`, `random_b`, `raw_pixel`,
+`videomae_b`, `vjepa2`.
 
 These numbers exist to show the pipeline measures what it claims to, and to
 record two things that came out differently from the spec's predictions. They
@@ -78,6 +78,35 @@ Worth noting for the write-up: **raw pixels are a strong baseline**, reaching
 0.808 balanced accuracy on contact against DINOv2's 0.891, and 0.197 R² on
 object speed against 0.244. Spec §8.4 requires this control precisely so that
 0.891 is not read as impressive on its own.
+
+---
+
+## H3 — confirmed, and the mass/friction split is exactly right
+
+Dynamic properties, scene-pooled so the frame encoders are scored on the same
+number of rows as the video encoders (one per scene), best layer per encoder:
+
+| encoder | kind | `log_mass` R² | `friction_slide` R² |
+|---|---|---|---|
+| dinov2_b | frame | −0.005 [−0.032, +0.003] | −0.004 [−0.035, +0.005] |
+| random_b | frame | −0.007 [−0.034, −0.002] | −0.009 [−0.041, +0.001] |
+| videomae_b | video | −0.008 [−0.037, +0.003] | **+0.265** [+0.172, +0.342] |
+| vjepa2 | video | −0.004 [−0.031, +0.004] | **+0.573** [+0.493, +0.641] |
+
+Friction is invisible to a single frame and strongly recoverable from a clip —
+V-JEPA 2 reaches R² 0.573 at its final block (L23), VideoMAE 0.265 at L8. Mass
+is recovered by **nothing**, video or frame.
+
+That split is not a shortfall; it is the physics being reported correctly.
+Coulomb friction decelerates a sliding object at *a = μg*, independent of mass,
+so the post-contact deceleration profile the video encoders are reading
+determines μ and carries no information about m. The spec predicted "friction
+recovered more strongly than mass"; the sharper statement the corpus supports is
+that friction is recoverable and mass is not observable at all from this
+trajectory.
+
+This also confirms the whole video path end to end, including the VideoMAE
+attention-bias repair — a lobotomised VideoMAE would not have reached 0.265.
 
 ---
 

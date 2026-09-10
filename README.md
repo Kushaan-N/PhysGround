@@ -31,7 +31,7 @@ network.
 |---|---|---|---|
 | **H1** | Geometric and kinematic state (object position, end-effector distance, support) is linearly decodable | confirmed | **confirmed** — object position +0.45 R² over random-init |
 | **H2** | Mass and friction are **not** decodable from single-frame encoders | confirmed — *a predicted refutation* | **confirmed** — mass TOST-equivalent to random init |
-| **H3** | Video encoders partially recover friction, and less so mass, from post-contact deceleration | partially confirmed | not yet run |
+| **H3** | Video encoders partially recover friction, and less so mass, from post-contact deceleration | partially confirmed | **confirmed** — V-JEPA 2 reaches R² 0.573 on friction; mass stays at 0 for every encoder |
 | **H4** | Contact state degrades disproportionately under occlusion | confirmed | **refuted** — contact is the *most* robust; see below |
 
 H2 and H4 are the point. Several probes are **expected to land at chance**, and
