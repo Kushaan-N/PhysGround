@@ -12,9 +12,27 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 
-os.environ.setdefault("MUJOCO_GL", "osmesa")
+def _verdict(test: dict, alpha: float = 0.05) -> str:
+    """Combine the superiority test and the equivalence test into one reading.
+
+    The two are not alternatives and both can fire at once. That case is the
+    whole reason spec 11 asks for a pre-registered smallest effect size: a
+    difference can be statistically distinguishable from the baseline and still
+    be too small to matter. Reporting only the p-value there would call a
+    negligible effect "above baseline"; reporting only the TOST would call a
+    real one "equivalent". Naming the conjunction is the honest option, and it
+    is the expected outcome for H2's targets at a large enough corpus.
+    """
+    superior = test.get("p_superiority_holm", 1.0) < alpha
+    equivalent = bool(test["tost_equivalent"])
+    if superior and equivalent:
+        return f"detectable but below the {test['tost_margin']:g} effect-size threshold"
+    if superior:
+        return "above baseline"
+    if equivalent:
+        return "equivalent to baseline"
+    return "inconclusive"
 
 
 def main() -> None:
@@ -108,11 +126,12 @@ def main() -> None:
         S.rows_to_csv(tests, tables_dir / "hypothesis_tests.csv")
         print(f"[figures] wrote hypothesis_tests.csv ({len(tests)} comparisons)", flush=True)
         for test in tests:
-            verdict = ("above baseline" if test.get("p_superiority_holm", 1) < 0.05
-                       else ("equivalent to baseline" if test["tost_equivalent"] else "inconclusive"))
+            test["verdict"] = _verdict(test)
             print(f"      {test['target']:16s} diff={test['observed_difference']:+.4f} "
                   f"p_holm={test.get('p_superiority_holm', float('nan')):.4f} "
-                  f"TOST={'yes' if test['tost_equivalent'] else 'no'}  -> {verdict}", flush=True)
+                  f"TOST={'yes' if test['tost_equivalent'] else 'no'}  -> {test['verdict']}",
+                  flush=True)
+        S.rows_to_csv(tests, tables_dir / "hypothesis_tests.csv")
 
     print(json.dumps({"figures": str(figures_dir), "tables": str(tables_dir),
                       "cells": len(all_rows)}, indent=2), flush=True)

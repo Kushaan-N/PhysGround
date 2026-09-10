@@ -315,23 +315,43 @@ def experiment_e(seed: int = 0, root: Path | None = None,
                  layers: Sequence[int] = (8, 11), views: Sequence[str] = ("cls", "mean")) -> dict:
     """Occlusion, matched pairs (spec 10, Exp E / H4).
 
-    Probes are fitted on *unoccluded* training scenes and evaluated on both the
+    Two families of cells, and the contrast between them is the point.
+
+    *Transfer* cells fit on unoccluded training scenes and evaluate on both the
     unoccluded and the occluded halves of the same held-out scenes. That is the
-    situation H4 is about: a readout learned from clean observation meeting the
-    occlusion that manipulation constantly produces. Fitting separately on each
-    condition would answer a different and less interesting question -- whether
-    occluded frames are learnable at all.
+    situation H4 describes: a readout learned from clean observation meeting the
+    occlusion that manipulation constantly produces.
+
+    *Matched* cells fit and evaluate entirely within the occluded condition.
+    Without them a drop in the transfer cells is uninterpretable, because two
+    very different things produce it: the occluder having destroyed the
+    information, or the occluder having moved the representation somewhere the
+    clean-trained readout does not point. Only the second is a distribution
+    shift, and only the first would support the claim that the encoder failed to
+    carry the state.
+
+    On the pilot this distinction decided the result. Object position fell from
+    R2 0.880 to 0.124 under transfer, but a probe *trained* on occluded frames
+    recovered 0.803 -- so the state was still in the representation and the
+    transfer number was measuring the readout, not the encoder.
     """
     arrays: dict[str, np.ndarray] = {}
     cells = []
     for encoder in encoders:
         for layer in layers:
             for view in views:
-                cell = cell_key(encoder, "paired", layer, view)
-                arrays.update(_prefixed(cell, run_cell(
+                transfer = cell_key(encoder, "paired", layer, view, task="transfer")
+                arrays.update(_prefixed(transfer, run_cell(
                     encoder, "base", layer, view, seed, feature_module.TARGETS,
                     root=root, eval_conditions=("occluded",))))
-                cells.append(cell)
+                cells.append(transfer)
+
+                matched = cell_key(encoder, "occluded", layer, view, task="matched")
+                arrays.update(_prefixed(matched, run_cell(
+                    encoder, "occluded", layer, view, seed, feature_module.TARGETS,
+                    root=root)))
+                cells.append(matched)
+
     path = _save("E", seed, arrays, root)
     return {"exp": "E", "seed": seed, "path": str(path), "n_cells": len(cells)}
 

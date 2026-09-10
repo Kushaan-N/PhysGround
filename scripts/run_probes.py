@@ -17,10 +17,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
-
-os.environ.setdefault("MUJOCO_GL", "osmesa")
-
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__,

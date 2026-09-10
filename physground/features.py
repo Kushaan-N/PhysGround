@@ -28,7 +28,6 @@ from typing import Iterable, Sequence
 import numpy as np
 
 from . import paths as P
-from .render import unpack_frames
 
 __all__ = [
     "scene_indices_for",
@@ -91,6 +90,12 @@ def shard_scenes(indices: Sequence[int], shard: int, n_shards: int) -> list[int]
 # --------------------------------------------------------------------------- #
 
 def _load_scene_frames(condition: str, index: int, root: Path | None = None) -> np.ndarray:
+    # Imported here, not at module scope. physground.render imports mujoco, and
+    # mujoco resolves MUJOCO_GL at import time -- so a module-level import would
+    # drag a GL backend requirement into the probe and figure stages, which read
+    # nothing but .npz files and are meant to run on a CPU node with no display.
+    from .render import unpack_frames
+
     directory = (Path(root) / "corpus" / condition / f"{index:05d}") if root else P.scene_dir(condition, index)
     with np.load(directory / "frames.npz") as archive:
         return unpack_frames(archive)

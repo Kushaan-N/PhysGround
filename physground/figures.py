@@ -220,9 +220,11 @@ def occlusion_figure(bins: np.ndarray, series: dict[str, dict], path: Path) -> P
             ax.fill_between(centres, np.asarray(data["ci_low"], dtype=float),
                             np.asarray(data["ci_high"], dtype=float), alpha=0.15, lw=0)
 
-    ax.axhline(0.5, color="grey", lw=0.9, alpha=0.7)
+    ax.axhline(1.0, color="grey", lw=0.9, alpha=0.7)
+    ax.axhline(0.0, color="grey", lw=0.9, alpha=0.4, ls="--")
+    ax.set_ylim(-0.15, 1.25)
     ax.set_xlabel("occlusion fraction of the target")
-    ax.set_ylabel("metric (normalised to its own unoccluded value)")
+    ax.set_ylabel("retained skill vs. the matched unoccluded frame")
     ax.set_title("Contact state degrades under occlusion; object position does not (H4)",
                  fontsize=10)
     ax.legend(fontsize=8)

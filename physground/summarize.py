@@ -227,63 +227,147 @@ def _best_cell(arrays: dict[str, np.ndarray], encoder: str, target: str) -> dict
 
 
 def occlusion_curve(exp: str, seed: int, targets: Sequence[str], root: Path | None = None,
-                    bins: Sequence[float] = (0.0, 0.15, 0.3, 0.45, 0.6, 0.8, 1.01),
-                    n_boot: int = 500) -> dict:
-    """Metric against occlusion fraction, for the H4 figure (spec 15, figure 4).
+                    bins: Sequence[float] = (0.0, 0.2, 0.4, 0.6, 1.01),
+                    n_boot: int = 500, encoder: str = "dinov2_b") -> dict:
+    """Paired degradation against occlusion fraction, for H4 (spec 15, figure 4).
 
-    Values are normalised to each target's own unoccluded score so that targets
-    measured on different scales -- R2 for position, balanced accuracy for
-    contact -- can share an axis. The claim is about *relative* degradation, so
-    normalising is what makes the comparison meaningful rather than a units
-    accident.
+    Each occluded frame is compared against **its own matched base frame** --
+    same scene, same frame index, same sampled factors, same trajectory, same
+    probe. Only the occluder differs (spec 5.4). Binning the occluded condition
+    on its own, and normalising to whatever its least-occluded bin happened to
+    score, throws that pairing away: the reference then carries its own sampling
+    noise, and with roughly 17 scenes per bin the resulting curve is dominated
+    by it. Measured that way the curve wandered between 0.54 and 1.29 with no
+    trend, on data where the paired contrast is clean.
+
+    Retained scale: within each bin, ``(occluded - chance) / (base - chance)``
+    on the same rows. 1.0 means occlusion cost nothing; 0.0 means the probe fell
+    to chance. Normalising is what lets R2 for position and balanced accuracy
+    for contact share an axis, and the claim is about *relative* degradation
+    anyway.
     """
     arrays = load_raw(exp, seed, root)
     bins = np.asarray(bins, dtype=float)
     series: dict[str, dict] = {}
 
     for target in targets:
-        prefix = _find_prefix(arrays, "dinov2_b", target, "occluded")
-        if prefix is None:
+        paired = _paired_rows(arrays, encoder, target)
+        if paired is None:
             continue
-        y_true = arrays[f"{prefix}|{target}|y_true"]
-        y_pred = arrays[f"{prefix}|{target}|y_pred"]
-        scenes = arrays[f"{prefix}|{target}|scene_index"]
-        occlusion_key = f"{prefix}|occlusion_fraction"
-        if occlusion_key not in arrays:
-            continue
-        occlusion = arrays[occlusion_key]
         metric = METRIC_FOR.get(target, "r2")
-
-        values, lows, highs = [], [], []
-        for low, high in zip(bins[:-1], bins[1:]):
-            mask = (occlusion >= low) & (occlusion < high)
-            if mask.sum() < 20 or np.unique(scenes[mask]).size < 5:
-                values.append(np.nan); lows.append(np.nan); highs.append(np.nan)
-                continue
-            result = stats_module.bootstrap_metric(metric, y_true[mask], y_pred[mask],
-                                                   scenes[mask], n_boot, seed)
-            values.append(result.value); lows.append(result.ci_low); highs.append(result.ci_high)
-
-        reference = values[0] if values and np.isfinite(values[0]) else np.nan
         chance = 0.5 if metric != "r2" else 0.0
-        scale = (reference - chance) if np.isfinite(reference) and abs(reference - chance) > 1e-9 else np.nan
-        series[target] = {
-            "value": [(v - chance) / scale for v in values],
-            "ci_low": [(v - chance) / scale for v in lows],
-            "ci_high": [(v - chance) / scale for v in highs],
-            "raw_value": values, "metric": metric, "reference": reference,
-        }
-    return {"bins": bins.tolist(), "series": series}
+        # Occlusion varies within a scene as the object moves past the slab, so
+        # binning on it also bins on *phase*. A narrow phase window contains
+        # little positional variance, and an R2 whose denominator is the bin's
+        # own variance then swings wildly for reasons that have nothing to do
+        # with occlusion -- measured that way, obj_pos_y read -0.80 in the least
+        # occluded bin and *improved* to +0.67 in the most occluded one. The
+        # denominator is therefore fixed to the full matched set's variance, so
+        # bins are on one scale and only the numerator responds to occlusion.
+        global_ss_tot = float(np.sum((paired["y_true_occ"] - paired["y_true_occ"].mean()) ** 2)
+                              / paired["y_true_occ"].size) if metric == "r2" else None
+
+        def score(y_true, y_pred):
+            if metric != "r2":
+                return stats_module.METRIC_FUNCTIONS[metric](y_true, y_pred)
+            if not global_ss_tot:
+                return np.nan
+            return 1.0 - float(np.mean((y_true - y_pred) ** 2)) / global_ss_tot
+
+        values, lows, highs, base_values, counts = [], [], [], [], []
+        for low, high in zip(bins[:-1], bins[1:]):
+            mask = (paired["occlusion"] >= low) & (paired["occlusion"] < high)
+            counts.append(int(mask.sum()))
+            if mask.sum() < 30 or np.unique(paired["scenes"][mask]).size < 8:
+                values.append(np.nan); lows.append(np.nan)
+                highs.append(np.nan); base_values.append(np.nan)
+                continue
+
+            scenes = paired["scenes"][mask]
+            base_point = score(paired["y_true_base"][mask], paired["y_pred_base"][mask])
+            occ_point = score(paired["y_true_occ"][mask], paired["y_pred_occ"][mask])
+            denominator = base_point - chance
+            values.append(float((occ_point - chance) / denominator)
+                          if abs(denominator) > 1e-9 else np.nan)
+            base_values.append(float(base_point))
+
+            # Bootstrap the ratio over scenes, keeping the pairing.
+            multiplicities, index = stats_module.group_multiplicities(scenes, n_boot, seed)
+            ratios = []
+            for row in multiplicities:
+                take = np.repeat(np.arange(scenes.size), row[index].astype(int))
+                if take.size == 0:
+                    continue
+                b = score(paired["y_true_base"][mask][take], paired["y_pred_base"][mask][take])
+                o = score(paired["y_true_occ"][mask][take], paired["y_pred_occ"][mask][take])
+                if abs(b - chance) > 1e-9:
+                    ratios.append((o - chance) / (b - chance))
+            if ratios:
+                lo, hi = np.percentile(np.asarray(ratios), [2.5, 97.5])
+                lows.append(float(lo)); highs.append(float(hi))
+            else:
+                lows.append(np.nan); highs.append(np.nan)
+
+        series[target] = {"value": values, "ci_low": lows, "ci_high": highs,
+                          "base_value": base_values, "n_rows": counts, "metric": metric}
+    return {"bins": bins.tolist(), "series": series, "encoder": encoder,
+            "note": "paired: each occluded frame against its matched base frame"}
 
 
-def _find_prefix(arrays, encoder: str, target: str, eval_condition: str) -> str | None:
+def _paired_rows(arrays: dict[str, np.ndarray], encoder: str, target: str) -> dict | None:
+    """Align an occluded evaluation with its matched base evaluation.
+
+    Both sides are stored sorted by ``(scene_index, frame_index)`` with a fixed
+    frame count per scene, so restricting the base side to the scenes the
+    occluded side covers makes the two row-for-row comparable. The row counts
+    are checked rather than assumed -- a mismatch would silently compare
+    different frames and produce a degradation number that means nothing.
+    """
+    base_prefix = _find_prefix(arrays, encoder, target, "base", task="transfer")
+    occ_prefix = _find_prefix(arrays, encoder, target, "occluded", task="transfer")
+    if base_prefix is None or occ_prefix is None:
+        return None
+    occlusion_key = f"{occ_prefix}|occlusion_fraction"
+    if occlusion_key not in arrays:
+        return None
+
+    base_scenes = arrays[f"{base_prefix}|{target}|scene_index"]
+    occ_scenes = arrays[f"{occ_prefix}|{target}|scene_index"]
+    keep = np.isin(base_scenes, np.unique(occ_scenes))
+    if int(keep.sum()) != occ_scenes.size:
+        return None
+    if not np.array_equal(base_scenes[keep], occ_scenes):
+        return None
+
+    return {
+        "scenes": occ_scenes,
+        "occlusion": arrays[occlusion_key],
+        "y_true_occ": arrays[f"{occ_prefix}|{target}|y_true"],
+        "y_pred_occ": arrays[f"{occ_prefix}|{target}|y_pred"],
+        "y_true_base": arrays[f"{base_prefix}|{target}|y_true"][keep],
+        "y_pred_base": arrays[f"{base_prefix}|{target}|y_pred"][keep],
+    }
+
+
+def _find_prefix(arrays, encoder: str, target: str, eval_condition: str,
+                 task: str | None = None) -> str | None:
+    """First cell prefix matching an encoder, target, evaluation condition, and task.
+
+    ``task`` matters from Experiment E onward, where the same encoder appears
+    twice per layer -- once trained on clean frames and once on occluded ones.
+    Matching without it would pick whichever happened to be stored first and
+    silently mix the transfer and matched-training analyses.
+    """
     for key in arrays:
         parsed = _parse_key(key)
         if parsed is None:
             continue
-        enc, _, _, _, _, evalc, tgt, field = parsed
-        if enc == encoder and tgt == target and evalc == eval_condition and field == "y_true":
-            return "|".join(parsed[:6])
+        enc, _, _, _, cell_task, evalc, tgt, field = parsed
+        if enc != encoder or tgt != target or evalc != eval_condition or field != "y_true":
+            continue
+        if task is not None and cell_task != task:
+            continue
+        return "|".join(parsed[:6])
     return None
 
 
