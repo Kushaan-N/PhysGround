@@ -18,16 +18,9 @@ import argparse
 import os
 
 
-def _configure_gl(backend: str | None) -> None:
-    if backend:
-        os.environ["MUJOCO_GL"] = backend
-    os.environ.setdefault("MUJOCO_GL", "osmesa")
-    if os.environ["MUJOCO_GL"] == "osmesa":
-        os.environ.setdefault("PYOPENGL_PLATFORM", "osmesa")
-    # MuJoCo's internal threading fights container-level parallelism; the
-    # pipeline runs one process per core instead (spec 17.4.4).
-    os.environ.setdefault("OMP_NUM_THREADS", "1")
-    os.environ.setdefault("MKL_NUM_THREADS", "1")
+# Shared with preflight_render so both entry points make the same choice, and
+# so the platform default lives in exactly one place.
+from preflight_render import configure_gl  # noqa: E402
 
 
 def main() -> None:
@@ -38,14 +31,15 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=0, help="master seed (spec 0.5)")
     parser.add_argument("--shard", type=int, default=0)
     parser.add_argument("--n-shards", type=int, default=1)
-    parser.add_argument("--gl", default=None, help="MUJOCO_GL backend; default osmesa")
+    parser.add_argument("--gl", default=None,
+                        help="MUJOCO_GL backend. Default: osmesa on Linux, the platform's own on macOS.")
     parser.add_argument("--skip-preflight", action="store_true",
                         help="skip the render backend check. Only for a machine already verified.")
     parser.add_argument("--force", action="store_true", help="regenerate scenes that already exist")
     parser.add_argument("--progress-every", type=int, default=50)
     args = parser.parse_args()
 
-    _configure_gl(args.gl)
+    configure_gl(args.gl)
 
     if not args.skip_preflight:
         from preflight_render import preflight          # noqa: E402

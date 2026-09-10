@@ -10,11 +10,13 @@ automated verdict -- it writes a contact sheet a human must open (spec 17.6).
 from __future__ import annotations
 
 import argparse
-import os
 
-os.environ.setdefault("MUJOCO_GL", "osmesa")
-if os.environ["MUJOCO_GL"] == "osmesa":
-    os.environ.setdefault("PYOPENGL_PLATFORM", "osmesa")
+# Settled before any import that could reach mujoco (spec 14, 17.6). The gates
+# read frames back rather than rendering, but gate_g4 re-extracts features and
+# the import graph is easier to reason about with one rule.
+from preflight_render import configure_gl  # noqa: E402
+
+configure_gl()
 
 import json  # noqa: E402
 

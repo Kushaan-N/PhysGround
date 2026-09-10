@@ -46,8 +46,11 @@ corpus: preflight  ## Generate the full corpus
 	$(PY) scripts/generate_corpus.py --condition base     --n $(N_BASE)     --seed $(SEED) --skip-preflight
 	$(PY) scripts/generate_corpus.py --condition occluded --n $(N_OCCLUDED) --seed $(SEED) --skip-preflight
 
+# --corpus-scenes is deliberately not $(N_BASE): G1 tests the factor sampler,
+# not the generated corpus, and evaluating it at pilot size measures sampling
+# noise (see DEVIATIONS.md #1).
 gates:  ## G1, G2, G3 (add G4 once features exist)
-	$(PY) scripts/run_gates.py --corpus-scenes $(N_BASE) --seed $(SEED) --gates 1,2,3
+	$(PY) scripts/run_gates.py --corpus-scenes 3000 --seed $(SEED) --gates 1,2,3
 
 features:  ## Extract frozen features for every encoder and condition
 	@for enc in dinov2_b random_b raw_pixel; do \

@@ -18,11 +18,39 @@ pass the identity check.
 from __future__ import annotations
 
 import os
+import sys
 
-# MUST precede `import mujoco`, and therefore any physground import.
-os.environ.setdefault("MUJOCO_GL", "osmesa")
-if os.environ["MUJOCO_GL"] == "osmesa":
-    os.environ.setdefault("PYOPENGL_PLATFORM", "osmesa")
+
+def configure_gl(backend: str | None = None) -> str:
+    """Settle ``MUJOCO_GL`` before mujoco is imported anywhere. Returns the choice.
+
+    An explicit value always wins, whether passed here or already exported --
+    the whole point of spec 17.1 is that the slow path must be *chosen*, so this
+    never overrides a deliberate setting.
+
+    The default is platform-dependent. ``osmesa`` is the right headless choice
+    on Linux, where the cluster and Modal run, but MuJoCo rejects it outright on
+    macOS, which uses CGL and needs no hint. Defaulting to osmesa everywhere
+    made the documented quick-start fail on any Mac with an error about an
+    environment variable rather than about rendering.
+    """
+    if backend:
+        os.environ["MUJOCO_GL"] = backend
+    elif "MUJOCO_GL" not in os.environ and sys.platform.startswith("linux"):
+        os.environ["MUJOCO_GL"] = "osmesa"
+
+    chosen = os.environ.get("MUJOCO_GL", "")
+    if chosen == "osmesa":
+        os.environ.setdefault("PYOPENGL_PLATFORM", "osmesa")
+    # MuJoCo's internal threading fights container-level parallelism; the
+    # pipeline runs one process per core instead (spec 17.4.4).
+    os.environ.setdefault("OMP_NUM_THREADS", "1")
+    os.environ.setdefault("MKL_NUM_THREADS", "1")
+    return chosen or "(platform default)"
+
+
+# MUST run before `import mujoco`, and therefore before any physground import.
+configure_gl()
 
 import argparse  # noqa: E402
 import json  # noqa: E402
@@ -87,7 +115,7 @@ def preflight(warn_ms: float = 15.0, fail_ms: float = 60.0, n: int = 20,
     finally:
         renderer.close()
 
-    backend = os.environ["MUJOCO_GL"]
+    backend = os.environ.get("MUJOCO_GL", "(platform default)")
     software = any(marker in gl_renderer.lower() for marker in _SOFTWARE_MARKERS)
 
     report = {"backend": backend, "gl_renderer": gl_renderer,

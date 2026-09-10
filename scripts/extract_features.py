@@ -12,12 +12,11 @@ from __future__ import annotations
 
 import argparse
 import json
-import os
 
-# Feature extraction imports torch, not mujoco, but physground.rollout is
-# reachable through the package and MUJOCO_GL must be settled before any import
-# that could pull mujoco in (spec 17.6).
-os.environ.setdefault("MUJOCO_GL", "egl")
+# No MUJOCO_GL here on purpose. Extraction reads PNGs back through
+# physground.frames, which imports no mujoco, so this stage needs no GL backend
+# at all -- and hard-coding one would make it fail on a machine whose valid
+# backends differ, for a reason unrelated to what it is doing.
 
 
 def main() -> None:

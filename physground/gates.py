@@ -32,10 +32,17 @@ class GateFailure(RuntimeError):
 # G1 - decorrelation
 # --------------------------------------------------------------------------- #
 
+#: Fewest scenes at which the |rho| <= 0.10 bound is a real bound rather than a
+#: coin flip. Spearman's standard error under independence is ~1/sqrt(n-1), so
+#: the threshold sits at 3.2 sigma here and at 0.8 sigma for a 50-scene pilot.
+G1_MIN_SCENES = 1000
+
+
 def gate_g1(n_scenes: int, master_seed: int, out_dir: Path | None = None,
             threshold: float = 0.10, alpha: float = 0.01,
             derived: dict[str, np.ndarray] | None = None,
-            scene_index: np.ndarray | None = None) -> dict:
+            scene_index: np.ndarray | None = None,
+            min_scenes: int = G1_MIN_SCENES) -> dict:
     """Decorrelation over the factor sampler, plus an advisory derived table.
 
     Two tables, and only the first is a gate.
@@ -77,8 +84,21 @@ def gate_g1(n_scenes: int, master_seed: int, out_dir: Path | None = None,
     an effective sample size near the scene count while being tested as though
     it had ten times that.
     """
-    table = factors_table(range(n_scenes), master_seed)
+    # Sampling factors costs microseconds per scene, no physics and no
+    # rendering, so there is never a reason to evaluate the sampler on fewer
+    # draws than make the bound meaningful. Raising it silently is right here
+    # precisely because the quantity does not depend on the corpus -- a caller
+    # who passed a pilot size wanted the gate, not a noise measurement.
+    effective = max(int(n_scenes), int(min_scenes))
+    if effective != n_scenes:
+        print(f"[G1] evaluating the sampler at {effective} scenes rather than {n_scenes}: "
+              f"below {min_scenes} the |rho| <= {threshold} bound is within sampling noise "
+              f"(SE ~ {1 / max(n_scenes - 1, 1) ** 0.5:.3f}). Decorrelation is a property of "
+              "the sampler, not of the corpus, and sampling is free.", flush=True)
+
+    table = factors_table(range(effective), master_seed)
     report = check_decorrelation(table, threshold=threshold, alpha=alpha)
+    report["requested_scenes"] = int(n_scenes)
 
     if derived and scene_index is not None:
         advisory = _derived_decorrelation(derived, scene_index, master_seed, threshold, alpha)
@@ -142,7 +162,7 @@ def gate_g2(condition_scenes: Sequence[tuple[str, int]], out_path: Path,
     True would let a pipeline claim a human looked at something nobody opened.
     """
     from .figures import contact_sheet
-    from .render import unpack_frames
+    from .frames import unpack_frames
 
     rng = np.random.default_rng(seed)
     frames, captions = [], []

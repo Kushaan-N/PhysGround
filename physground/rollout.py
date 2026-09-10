@@ -39,7 +39,8 @@ import numpy as np
 from . import ground_truth as gt
 from . import paths as P
 from .factors import sample_factors, scene_id
-from .render import SceneRenderer, pack_frames
+from .frames import pack_frames
+from .render import SceneRenderer
 from .scene import ARM, CAMERA, ArmSpec, RENDER_HW, build_mjcf, planar_ik
 
 __all__ = [

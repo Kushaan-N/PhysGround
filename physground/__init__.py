@@ -26,6 +26,7 @@ _LAZY = {
     "factors",
     "features",
     "figures",
+    "frames",
     "gates",
     "ground_truth",
     "latent_dynamics",
