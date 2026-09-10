@@ -5,9 +5,9 @@ master seed 0, one probe seed. Encoders: `dinov2_b`, `random_b`, `raw_pixel`,
 `videomae_b`, `vjepa2`.
 
 These numbers exist to show the pipeline measures what it claims to, and to
-record two things that came out differently from the spec's predictions. They
-are **not** the paper's results: one probe seed, half the corpus, and no
-multiple-seed aggregation.
+record where the spec's predictions held (H1, H2, H3) and where one did not
+(H4). They are **not** the paper's results: one probe seed, half the corpus, and
+no multiple-seed aggregation.
 
 Regenerate everything here from the raw archives with
 `python scripts/make_figures.py --seeds 0`.
