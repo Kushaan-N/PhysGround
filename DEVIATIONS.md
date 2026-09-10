@@ -196,12 +196,82 @@ asked for.
 
 ---
 
-## 8. Modules added beyond the spec's file list
+## 8. Experiment E gained matched-training cells
+
+**Spec:** §10 describes Exp E as "Occlusion: matched pairs, H4".
+
+**Problem:** a probe fitted on clean frames and evaluated on occluded ones
+produces a drop, but the drop alone is ambiguous. Two very different things
+cause it: the occluder destroyed the information, or the occluder moved the
+representation somewhere the clean-trained readout does not point. Only the
+first supports H4's claim about the encoder.
+
+**Measured on the pilot:** object position fell from R² 0.880 to 0.124 under
+transfer, and a probe *trained* on occluded frames recovered 0.803. The state
+was still in the representation; the transfer number was measuring the readout.
+
+**Change:** Exp E runs both families — transfer cells and matched-training cells
+— so the two explanations are separable. See `RESULTS_pilot.md`.
+
+---
+
+## 9. The H4 curve is paired, and uses a fixed variance
+
+**Spec:** §15 figure 4 plots contact-state accuracy against occlusion fraction.
+
+**Problems, both found by looking at the output:**
+
+*Unpaired.* Binning the occluded condition alone and normalising to its own
+least-occluded bin discards the matched pairing the corpus exists to provide.
+With ~17 scenes per bin, the reference carries enough noise to dominate: the
+curve wandered between 0.54 and 1.29 with no trend.
+
+*Variance restriction.* Occlusion varies within a scene as the object moves past
+the slab, so binning on occlusion also bins on **phase**. A narrow phase window
+contains little positional variance, and an R² whose denominator is the bin's
+own variance swings for reasons unrelated to occlusion — `obj_pos_y` read −0.80
+in the least-occluded bin and *improved* to +0.67 in the most-occluded one.
+
+**Change:** each occluded frame is compared against its own matched base frame,
+and the R² denominator is fixed to the full matched set's variance so bins sit
+on one scale and only the numerator responds to occlusion.
+
+---
+
+## 10. Gate G1 refuses to run at pilot sample size
+
+Following from §1: `gate_g1` now raises its own sample size to 1,000 scenes when
+handed less, and says so. Sampling factors is free and the quantity does not
+depend on the corpus, so a caller who passed a pilot size wanted the gate rather
+than a noise measurement. This was a live footgun, not a hypothetical —
+`make pilot` passed the pilot size through and a 40-scene run failed on
+max |ρ| = 0.445.
+
+---
+
+## 11. Frame packing lives outside the renderer
+
+Decoding a PNG needs PIL and NumPy. Keeping `pack_frames`/`unpack_frames` in
+`render.py` meant they dragged in `mujoco`, which resolves `MUJOCO_GL` at import
+time — so feature extraction and the gate contact sheet, which only read frames
+back, required a working GL backend and failed on machines whose valid backends
+differ. They now live in `physground/frames.py`, which imports no mujoco;
+`render.py` re-exports them.
+
+Relatedly, `MUJOCO_GL` defaults are now platform-aware (`osmesa` on Linux, the
+platform's own on macOS, an explicit value always winning). Hard-coding `osmesa`
+made every documented command fail on a Mac.
+
+---
+
+## 12. Modules added beyond the spec's file list
 
 `physground/paths.py` (output layout, atomic writes, completion markers),
 `physground/render.py` (renderer reuse and frame packing), `physground/gates.py`
 (G1–G4 as importable functions), `physground/experiments.py` (Exp A–F),
-`physground/summarize.py` (raw arrays → tables and tests).
+`physground/summarize.py` (raw arrays → tables and tests),
+`physground/frames.py` (PNG packing, mujoco-free),
+`physground/latent_dynamics.py` (the optional H5 predictor).
 
 Each exists so the corresponding `scripts/` entry point stays a thin CLI and the
 logic underneath is directly testable. No module in §12's list was removed.
