@@ -200,3 +200,38 @@ def test_logistic_selects_on_balanced_accuracy_under_imbalance():
     probe = LogisticProbe(n_folds=3).fit(x, y, scene_index)
     assert probe.cv_scores_.max() > 0.6
     assert len(set(probe.predict(x))) == 2
+
+
+# --------------------------------------------------------------------------- #
+# Scene pooling (Experiment F)
+# --------------------------------------------------------------------------- #
+
+def test_pool_by_scene_averages_features_and_takes_the_first_frame():
+    """Backs the frame-vs-video comparison of H3.
+
+    Video encoders emit one row per scene, so the frame encoders are pooled to
+    match. If pooling picked the wrong row for the targets, the H3 comparison
+    would silently score the frame encoders against shifted labels -- and since
+    H3's targets are constant within a scene, the error would be invisible in
+    exactly the case it matters.
+    """
+    from physground.experiments import _pool_by_scene
+
+    scene_index = np.repeat([5, 2, 9], 4)          # deliberately unsorted ids
+    x = np.arange(12 * 3, dtype=float).reshape(12, 3)
+    targets = {
+        "log_mass": np.repeat([1.0, 2.0, 3.0], 4),   # constant within a scene
+        "frame_index": np.tile(np.arange(4), 3),
+        "scene_index": scene_index,
+    }
+
+    pooled, collapsed, scenes = _pool_by_scene(x, targets, scene_index)
+
+    assert scenes.tolist() == [2, 5, 9]
+    for position, scene in enumerate(scenes):
+        rows = scene_index == scene
+        assert np.allclose(pooled[position], x[rows].mean(axis=0))
+    # Per-scene targets survive pooling with their own value, in scene order.
+    assert collapsed["log_mass"].tolist() == [2.0, 1.0, 3.0]
+    # The retained frame is each scene's first, not an arbitrary one.
+    assert collapsed["frame_index"].tolist() == [0, 0, 0]
