@@ -264,37 +264,81 @@ def _uniform_cdf(low: float, high: float):
 
 def gate_g4(condition: str = "base", encoder: str = "dinov2_b", layer: int = 8,
             view: str = "cls", tolerance: float = 0.01, probe_seed: int = 0,
+            n_scenes: int = 200, batch_size: int = 64,
             out_dir: Path | None = None, root: Path | None = None) -> dict:
     """fp16 versus fp32 on the positive control (spec 9.4).
 
-    Extracts the pilot twice and compares R2 on object position. Once this
-    passes, fp16 is used everywhere and the question is closed. The comparison
-    is made on the *probe metric*, not on feature reconstruction error, because
-    that is the only quantity any conclusion depends on -- features can differ
-    at the fifth decimal without moving a linear readout at all.
+    Embeds a pilot subset once, keeps the pooled features at both precisions,
+    and compares R2 on object position. Once this passes, fp16 is used
+    everywhere and the question is closed (spec 3.6).
+
+    The comparison is made on the **probe metric**, not on feature
+    reconstruction error, because that is the only quantity any conclusion
+    depends on: features can differ in the fifth decimal without moving a linear
+    readout at all.
+
+    Nothing is written to the feature cache. An earlier version called
+    ``extract(..., force=True)`` with ``n_shards=1``, which on a full corpus
+    would have re-embedded every frame twice *and* overwritten the production
+    shards with a single-shard layout -- leaving stale shards from the real
+    8-shard run beside it, which is exactly the duplicate-row hazard
+    ``load_features`` now refuses. Embedding in memory avoids the whole class of
+    problem, and 200 scenes is ample to bound a 0.01 R2 difference.
     """
     from . import features as feature_module
+    from .encoders import get_encoder
+    from .frames import unpack_frames
     from .probes import MultiRidgeCV
     from .splits import split_frames
     from .stats import r2_score
 
+    data_root = Path(root) if root else None
+    indices = feature_module.scene_indices_for(condition, data_root)[:n_scenes]
+    if not indices:
+        raise GateFailure(f"G4 needs a generated corpus for condition {condition!r}")
+
+    model = get_encoder(encoder)
+    blocks, scene_column = [], []
+    try:
+        for start in range(0, len(indices), batch_size):
+            chunk = indices[start:start + batch_size]
+            frames = []
+            for index in chunk:
+                directory = ((data_root / "corpus" / condition / f"{index:05d}") if data_root
+                             else P.scene_dir(condition, index))
+                with np.load(directory / "frames.npz") as archive:
+                    scene_frames = unpack_frames(archive)
+                frames.append(scene_frames)
+                scene_column.extend([index] * len(scene_frames))
+            outputs = model.embed(np.concatenate(frames))
+            blocks.append(np.asarray(outputs[layer][view]))
+    finally:
+        model.close()
+
+    features_fp32 = np.concatenate(blocks).astype(np.float32)
+    scene_index = np.asarray(scene_column, dtype=np.int64)
+    targets = feature_module.load_targets(condition, indices, data_root)
+    if targets["scene_index"].size != scene_index.size:
+        raise GateFailure("G4: feature rows and target rows do not correspond")
+
+    train, test = split_frames(scene_index, probe_seed)
+    y = np.column_stack([targets["obj_pos_x"], targets["obj_pos_y"]]).astype(float)
+
     scores = {}
     for dtype in ("float32", "float16"):
-        for shard in range(1):
-            feature_module.extract(encoder, condition, shard, 1, root=root, dtype=dtype,
-                                   store_patches=False, force=True, progress_every=0)
-        x, targets, scene_index = feature_module.load_dataset(encoder, condition, layer, view, root)
-        train, test = split_frames(scene_index, probe_seed)
-        y = np.column_stack([targets["obj_pos_x"], targets["obj_pos_y"]]).astype(float)
-        model = MultiRidgeCV().fit(x[train], y[train], scene_index[train])
-        prediction = model.predict(x[test])
+        # Round-trip through the cached precision, then probe in float64 exactly
+        # as the real pipeline does.
+        x = features_fp32.astype(np.dtype(dtype)).astype(np.float64)
+        fitted = MultiRidgeCV().fit(x[train], y[train], scene_index[train])
+        prediction = fitted.predict(x[test])
         scores[dtype] = float(np.mean([r2_score(y[test][:, k], prediction[:, k]) for k in range(2)]))
 
     difference = abs(scores["float32"] - scores["float16"])
     report = {"gate": "G4", "passed": bool(difference < tolerance),
               "r2_float32": scores["float32"], "r2_float16": scores["float16"],
               "abs_difference": difference, "tolerance": tolerance,
-              "encoder": encoder, "layer": layer, "view": view}
+              "encoder": encoder, "layer": layer, "view": view,
+              "n_scenes": len(indices), "n_rows": int(scene_index.size)}
     if out_dir is not None:
         P.atomic_write_json(Path(out_dir) / "gate_g4.json", report)
     return report

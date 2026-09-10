@@ -21,6 +21,7 @@ Regenerate everything here from the raw archives with
 | G1 decorrelation | **pass** — max &#124;ρ&#124; = 0.053 over 241 cross-group pairs at n = 3000, 0 significant after Holm |
 | G2 contact sheet | inspected; caught two real defects (see `DEVIATIONS.md` §4, and the README) |
 | G3 label sanity | **pass** — contact positive rate 0.400, support 84/16, all targets finite, KS p = 0.62 (mass) and 0.87 (friction) |
+| G4 precision | **pass** — fp16 vs fp32 on the positive control differ by 3.7e-05 R², against a 0.01 tolerance |
 | Occlusion estimator | **pass** — ray cast vs. double render, Pearson r = 0.985 over 72 measurements spanning 0.01–0.99 |
 
 ## Kill-switches
