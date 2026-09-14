@@ -6,7 +6,7 @@ or points at the file that measures it; where a number is an estimate rather
 than an observation, it says so.
 
 **Repo:** `git@github.com:Kushaan-N/PhysGround.git`, branch `main`.
-**State at handoff:** working tree clean, 81 tests passing, everything below
+**State at handoff:** working tree clean, 83 tests passing, everything below
 reproducible from `main`. `git log --oneline` reads as a narrative — each commit
 message says what changed and, where a measurement forced it, what the
 measurement was.
@@ -74,7 +74,7 @@ re-resolve one.
   `raw_pixel`, `videomae_b`, `vjepa2`)
 - Experiments A, B, C, D, E, F — run on 1,500 base + 500 occluded scenes
 - Figures 1–4, hypothesis tests with Holm and TOST
-- 81 tests, ~8 s, no checkpoint downloads
+- 83 tests, ~9 s, no checkpoint downloads
 
 ### Implemented and unit-tested, but never run at scale
 
@@ -165,7 +165,12 @@ for s in $(seq 0 15); do
       --shard $s --n-shards 16 --skip-preflight &
 done; wait
 
-# 3. Features. Drop --no-patches for dinov2_b/base if you want Experiment S.
+# 3. Confirm generation actually finished. A dead shard leaves a hole and no
+#    process reports it — see 5.9. Seconds, read-only.
+python scripts/check_corpus.py --condition base --expected 3000
+python scripts/check_corpus.py --condition occluded --expected 1000 --paired-with base
+
+# 4. Features. Drop --no-patches for dinov2_b/base if you want Experiment S.
 for enc in dinov2_b random_b raw_pixel; do
   for cond in base occluded; do
     for s in $(seq 0 7); do
@@ -185,20 +190,43 @@ for enc in videomae_b vjepa2; do
   done
 done
 
-# 4. Kill-switches. These exit non-zero on failure; let them stop you.
+# 5. Kill-switches. These exit non-zero on failure; let them stop you.
 python scripts/run_probes.py --exp A,B --seed 0
 
-# 5. The grid, 5 seeds as spec 3.5 requires.
-python scripts/run_probes.py --exp C,D,E,F --seed 0,1,2,3,4
+# 6. The grid, 5 seeds as spec 3.5 requires. Seeds are independent, so --jobs is
+#    a straight wall-clock win; keep it at 1 for experiment S (see 5.10).
+python scripts/run_probes.py --exp C,D,E,F --seed 0,1,2,3,4 --jobs 5
 
-# 6. Tables, figures, hypothesis tests. No GPU, no model.
+# 7. Tables, figures, hypothesis tests. No GPU, no model.
 python scripts/make_figures.py --seeds 0,1,2,3,4
 ```
 
 SLURM equivalents are in `slurm/*.sbatch`; Modal in `modal_app.py`
 (`modal run modal_app.py`).
 
-### 4.5 Where everything lives, and what does *not* come with the clone
+### 4.5 Everything resumes; nothing needs babysitting
+
+Every stage is idempotent against a config hash, so a run that dies partway
+through redoes only what it lost (spec §0.6). That covers generation,
+extraction, **and experiments** — the last of those was a gap until recently:
+the experiment runner wrote a completion marker that nothing ever read, so a
+grid killed at seed 3 redid seeds 0–2 on restart.
+
+Practically, on a preemptible VM you can re-issue the exact same command after
+an interruption and it will pick up where it stopped. Pass `--force` to redo
+regardless.
+
+One subtlety worth knowing rather than discovering: Experiments A and B
+**recompute their verdict from the cached archive** instead of reporting
+"skipped" with no verdict. Otherwise resuming a grid whose kill-switch had
+already *failed* would skip it, report nothing wrong, and let the run continue
+past a stop condition.
+
+The config hash covers the probe seed and the cell grid, so changing the encoder
+set, layers, or views correctly invalidates prior work rather than silently
+reusing it.
+
+### 4.6 Where everything lives, and what does *not* come with the clone
 
 **Nothing under `outputs/` is in git.** The repo tracks code and documents only;
 the pilot corpus, features, and results lived on the machine that produced them
@@ -241,7 +269,7 @@ shard and both conditions or the matched occlusion pairs stop matching. On
 `run_probes.py` it is the **probe seed**, which only chooses the train/test scene
 partition; spec §3.5 wants five of those over one fixed corpus.
 
-### 4.6 Makefile shortcuts
+### 4.7 Makefile shortcuts
 
 `make help` lists them. The useful ones:
 
@@ -250,15 +278,16 @@ partition; spec §3.5 wants five of those over one fixed corpus.
 | `make preflight` | render backend identity + timing check |
 | `make pilot` | 50-scene pilot, then gates G1–G3 |
 | `make corpus` | full corpus, both conditions |
+| `make check` | corpus completeness and per-scene quality flags |
 | `make features` | all encoders, both conditions, no patch tokens |
-| `make probes` | A,B as kill-switches, then C,D,E over `$(SEEDS)` |
+| `make probes` | A,B as kill-switches, then C,D,E,F over `$(SEEDS)`, `JOBS=` workers |
 | `make figures` | regenerate every table and figure |
-| `make test` | the 81 tests |
+| `make test` | the 83 tests |
 | `make clean-outputs` | delete everything regenerable; never touches code |
 
-Override the defaults inline: `N_BASE=3000 SEEDS=0,1,2,3,4 make probes`.
+Override the defaults inline: `N_BASE=3000 SEEDS=0,1,2,3,4 JOBS=5 make probes`.
 
-### 4.7 Timings
+### 4.8 Timings
 
 Measured on Apple M3 Pro, single process, with hardware GL and MPS. **Linux VM
 numbers will differ** — generation is slower under software rendering, extraction
@@ -270,7 +299,7 @@ is faster on a real CUDA GPU.
 | DINOv2 extraction | 41 frames/s effective | CUDA should be several× faster |
 | VideoMAE | 156 s / 1,500 scenes | |
 | V-JEPA 2 | 882 s / 1,500 scenes | the long pole; ~4× that for 4,000 scenes on MPS |
-| Exp D, 16 cells | 562 s | logistic probes dominate, not ridge |
+| Exp D, 16 cells | 562 s | per seed; logistic probes dominate, not ridge. `--jobs 5` runs five seeds in the time of roughly one |
 | Exp F | 12 s | features already cached |
 | Test suite | 8 s | |
 
@@ -358,6 +387,34 @@ independent pair clears the 0.10 threshold about half the time. Measured on this
 factor table: n=50 gives max |ρ| = 0.446, n=3000 gives 0.053. `gate_g1` raises
 its own sample size to 1,000 and says so. Do not pass it a pilot size and
 conclude the sampler is broken. Full reasoning in `DEVIATIONS.md` §1.
+
+### 5.9 A dead generation shard is silent
+
+Generation runs as N parallel shards. If one dies — preemption, OOM, a node
+going away — the others finish and the run *looks* successful, because no single
+process's exit code covers the hole. It surfaces much later as a feature matrix
+with fewer rows than expected, pointing nowhere near generation.
+
+`scripts/check_corpus.py` closes this. It is read-only, takes seconds, and also
+reports the per-scene quality flags the rollout already records (distractor
+touched, target left frame, settled, contact rate). When missing indices form an
+arithmetic progression it says so and names the shard to re-run, since that is
+exactly the signature of one dead worker. Run it between generation and
+extraction.
+
+### 5.10 `--jobs` memory, and why experiment S is different
+
+Probe seeds are independent, so `--jobs N` is a straight wall-clock win — on the
+pilot, Experiment D alone was 562 s per seed, so five seeds serially is ~47
+minutes that parallelises to ~10.
+
+Each worker holds its own copy of the feature matrix. For the pooled views that
+is ~100 MB per worker and irrelevant. For **experiment S it is gigabytes**,
+because patch tokens are ~60× the pooled payload — keep `--jobs 1` there.
+
+Workers pin themselves to one BLAS thread. Without that, N workers each try to
+use every core and oversubscribe the machine N-fold, which is slower than
+running serially rather than faster.
 
 ---
 
@@ -481,7 +538,7 @@ S.occlusion_curve("E", 0, ("contact_state", "obj_pos_x"))           # H4, paired
 
 ## 10. Things I would check first if something looks wrong
 
-- Run `pytest tests/ -q`. 81 tests, 8 s, no downloads. If any fail, fix that
+- Run `pytest tests/ -q`. 83 tests, ~9 s, no downloads. If any fail, fix that
   before trusting a number.
 - Run `python scripts/preflight_render.py`. Most rendering weirdness is this.
 - Run `python scripts/validate_occlusion.py`. Pearson r should be > 0.95

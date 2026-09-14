@@ -16,6 +16,9 @@ N_OCCLUDED ?= 1000
 SEEDS      ?= 0,1,2,3,4
 GEN_SHARDS ?= 8
 EXT_SHARDS ?= 8
+# Seeds are independent, so probing them in parallel is a straight wall-clock
+# win. Keep JOBS=1 for experiment S, whose patch tokens are gigabytes per worker.
+JOBS       ?= 1
 
 # osmesa on Linux; macOS uses CGL and rejects osmesa outright.
 UNAME := $(shell uname -s)
@@ -26,7 +29,7 @@ else
 endif
 PY := $(GL_ENV) PYTHONPATH=$(CURDIR):$(CURDIR)/scripts python
 
-.PHONY: help preflight pilot corpus gates features probes figures test clean-outputs
+.PHONY: help preflight pilot corpus check gates features probes figures test clean-outputs
 
 help:
 	@grep -E '^[a-z-]+:.*?##' $(MAKEFILE_LIST) | sed 's/:.*##/\t/'
@@ -46,6 +49,10 @@ corpus: preflight  ## Generate the full corpus
 	$(PY) scripts/generate_corpus.py --condition base     --n $(N_BASE)     --seed $(SEED) --skip-preflight
 	$(PY) scripts/generate_corpus.py --condition occluded --n $(N_OCCLUDED) --seed $(SEED) --skip-preflight
 
+check:  ## Verify the corpus is complete before spending GPU time on it
+	$(PY) scripts/check_corpus.py --condition base --expected $(N_BASE)
+	$(PY) scripts/check_corpus.py --condition occluded --expected $(N_OCCLUDED) --paired-with base
+
 # --corpus-scenes is deliberately not $(N_BASE): G1 tests the factor sampler,
 # not the generated corpus, and evaluating it at pilot size measures sampling
 # noise (see DEVIATIONS.md #1).
@@ -64,7 +71,7 @@ features:  ## Extract frozen features for every encoder and condition
 
 probes:  ## A and B are kill-switches and exit non-zero on failure
 	$(PY) scripts/run_probes.py --exp A,B --seed $(SEED)
-	$(PY) scripts/run_probes.py --exp C,D,E --seed $(SEEDS)
+	$(PY) scripts/run_probes.py --exp C,D,E,F --seed $(SEEDS) --jobs $(JOBS)
 
 figures:  ## Regenerate every table and figure from the raw archives
 	$(PY) scripts/make_figures.py --seeds $(SEEDS)

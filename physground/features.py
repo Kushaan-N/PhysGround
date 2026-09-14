@@ -21,6 +21,7 @@ never the linear algebra.
 
 from __future__ import annotations
 
+import os
 import time
 from pathlib import Path
 from typing import Iterable, Sequence
@@ -97,10 +98,32 @@ def _load_scene_frames(condition: str, index: int, root: Path | None = None) -> 
         return unpack_frames(archive)
 
 
+def _load_batch_frames(condition: str, indices: Sequence[int], root: Path | None,
+                       workers: int) -> list[np.ndarray]:
+    """Decode a batch of scenes, in parallel.
+
+    PNG decode is pure CPU and was serial and inline with the forward pass, so
+    on a fast GPU the device sat idle waiting for Pillow. Threads rather than
+    processes because Pillow releases the GIL inside the decoder, so this gets
+    the parallelism without paying to pickle image arrays between processes.
+
+    ``executor.map`` preserves input order, which matters: scene and frame
+    indices are assigned positionally right after this returns, so a reordered
+    batch would silently mislabel every row in it.
+    """
+    if workers <= 1 or len(indices) <= 1:
+        return [_load_scene_frames(condition, i, root) for i in indices]
+
+    from concurrent.futures import ThreadPoolExecutor
+
+    with ThreadPoolExecutor(max_workers=min(workers, len(indices))) as pool:
+        return list(pool.map(lambda i: _load_scene_frames(condition, i, root), indices))
+
+
 def extract(encoder_name: str, condition: str = "base", shard: int = 0, n_shards: int = 1,
             root: Path | None = None, batch_size: int = 64, dtype: str = "float16",
             store_patches: bool = True, force: bool = False, encoder_kwargs: dict | None = None,
-            progress_every: int = 20) -> dict:
+            progress_every: int = 20, decode_workers: int | None = None) -> dict:
     """Extract and cache features for one shard.
 
     Idempotent (spec 0.6): a shard whose output matches the current config hash
@@ -130,6 +153,9 @@ def extract(encoder_name: str, condition: str = "base", shard: int = 0, n_shards
     if not force and P.is_complete(pooled_path, cfg_hash=cfg_hash):
         return {"encoder": encoder_name, "shard": shard, "skipped": True, "reason": "already complete"}
 
+    if decode_workers is None:
+        decode_workers = min(8, (os.cpu_count() or 2))
+
     encoder = get_encoder(encoder_name, **(encoder_kwargs or {}))
     np_dtype = np.dtype(dtype)
     started = time.perf_counter()
@@ -143,7 +169,7 @@ def extract(encoder_name: str, condition: str = "base", shard: int = 0, n_shards
         for position in range(0, len(indices), batch_size if not encoder.is_video else max(batch_size // 10, 1)):
             if encoder.is_video:
                 chunk = indices[position:position + max(batch_size // 10, 1)]
-                clips = np.stack([_load_scene_frames(condition, i, data_root) for i in chunk])
+                clips = np.stack(_load_batch_frames(condition, chunk, data_root, decode_workers))
                 outputs = encoder.embed(clips)
                 scene_column.extend(chunk)
                 # Video encoders emit one embedding per scene, so there is no
@@ -152,10 +178,9 @@ def extract(encoder_name: str, condition: str = "base", shard: int = 0, n_shards
                 frame_column.extend([-1] * len(chunk))
             else:
                 chunk = indices[position:position + batch_size]
-                frames, scenes, frame_ids = [], [], []
-                for i in chunk:
-                    scene_frames = _load_scene_frames(condition, i, data_root)
-                    frames.append(scene_frames)
+                frames = _load_batch_frames(condition, chunk, data_root, decode_workers)
+                scenes, frame_ids = [], []
+                for i, scene_frames in zip(chunk, frames):
                     scenes.extend([i] * len(scene_frames))
                     frame_ids.extend(range(len(scene_frames)))
                 outputs = encoder.embed(np.concatenate(frames))

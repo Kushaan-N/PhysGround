@@ -198,12 +198,61 @@ def _occlusion_for(condition, mask, root, pool_scenes):
 # Experiments
 # --------------------------------------------------------------------------- #
 
-def _save(exp: str, seed: int, arrays: dict[str, np.ndarray], root: Path | None = None) -> Path:
+def _result_path(exp: str, seed: int, root: Path | None = None) -> Path:
     directory = (Path(root) / "results" / exp / f"seed_{seed:02d}") if root else P.results_dir(exp, seed)
-    path = directory / "raw.npz"
+    return directory / "raw.npz"
+
+
+def config_hash(exp: str, seed: int, **params) -> str:
+    """Hash identifying one experiment run, computable *before* it runs.
+
+    That last part is the whole point. The earlier version hashed the output
+    array names, which are only known once the work is finished, so the
+    completion marker it wrote could never be checked against anything -- and
+    experiments had no idempotence at all despite spec 0.6 requiring it of
+    "every generation and training step". The parameters that change the result
+    are the experiment name, the probe seed, and the cell grid.
+    """
+    return P.config_hash({"exp": exp, "seed": seed, **params})
+
+
+def completed(exp: str, seed: int, cfg_hash: str, root: Path | None = None) -> Path | None:
+    """The finished archive for this exact config, or None."""
+    path = _result_path(exp, seed, root)
+    return path if P.is_complete(path, cfg_hash=cfg_hash) else None
+
+
+def _load_saved(path: Path) -> dict[str, np.ndarray]:
+    with np.load(path, allow_pickle=False) as archive:
+        return {key: archive[key] for key in archive.files}
+
+
+def _field(arrays: dict[str, np.ndarray], target: str, field: str) -> np.ndarray | None:
+    """Find one field in a saved archive without reconstructing the cell key.
+
+    Kill-switch verdicts have to be recomputable from a *cached* archive, not
+    only from a fresh run -- otherwise resuming a grid whose Experiment A had
+    failed would skip it, report no failure, and let the run continue past a
+    stop condition. Matching on the key suffix avoids having to rebuild the
+    exact encoder/layer/view prefix just to read a column back.
+    """
+    suffix = f"|{target}|{field}"
+    for key, value in arrays.items():
+        if key.endswith(suffix):
+            return value
+    return None
+
+
+def _skip_report(exp: str, seed: int, path: Path) -> dict:
+    return {"exp": exp, "seed": seed, "path": str(path), "skipped": True,
+            "reason": "already complete under this config; pass force=True to redo"}
+
+
+def _save(exp: str, seed: int, arrays: dict[str, np.ndarray], root: Path | None = None,
+          cfg_hash: str | None = None) -> Path:
+    path = _result_path(exp, seed, root)
     P.atomic_write_npz(path, arrays, compress=True)
-    P.write_done_marker(path, cfg_hash=P.config_hash({"exp": exp, "seed": seed,
-                                                      "keys": sorted(arrays)}))
+    P.write_done_marker(path, cfg_hash=cfg_hash or config_hash(exp, seed))
     return path
 
 
@@ -212,7 +261,8 @@ def _prefixed(cell: str, arrays: dict[str, np.ndarray]) -> dict[str, np.ndarray]
 
 
 def experiment_a(seed: int = 0, root: Path | None = None, condition: str = "base",
-                 encoder: str = "dinov2_b", layer: int = 8, view: str = "cls") -> dict:
+                 encoder: str = "dinov2_b", layer: int = 8, view: str = "cls",
+                 force: bool = False) -> dict:
     """Positive control: object image-plane position (spec 10, Exp A).
 
     Kill condition is R2 < 0.90. Object position is unambiguously present in
@@ -222,38 +272,49 @@ def experiment_a(seed: int = 0, root: Path | None = None, condition: str = "base
     """
     from .stats import r2_score
 
-    arrays = run_cell(encoder, condition, layer, view, seed,
-                      ("obj_pos_x", "obj_pos_y"), root=root)
-    cell = cell_key(encoder, condition, layer, view)
-    path = _save("A", seed, _prefixed(cell, arrays), root)
+    cfg_hash = config_hash("A", seed, condition=condition, encoder=encoder, layer=layer, view=view)
+    done = None if force else completed("A", seed, cfg_hash, root)
+    if done is not None:
+        saved, path, skipped = _load_saved(done), done, True
+    else:
+        arrays = run_cell(encoder, condition, layer, view, seed,
+                          ("obj_pos_x", "obj_pos_y"), root=root)
+        saved = _prefixed(cell_key(encoder, condition, layer, view), arrays)
+        path, skipped = _save("A", seed, saved, root, cfg_hash=cfg_hash), False
 
-    scores = {t: r2_score(arrays[f"{condition}|{t}|y_true"], arrays[f"{condition}|{t}|y_pred"])
+    scores = {t: r2_score(_field(saved, t, "y_true"), _field(saved, t, "y_pred"))
               for t in ("obj_pos_x", "obj_pos_y")}
     mean_r2 = float(np.mean(list(scores.values())))
-    return {"exp": "A", "seed": seed, "path": str(path), "r2": scores, "mean_r2": mean_r2,
-            "passed": bool(mean_r2 >= 0.90),
+    return {"exp": "A", "seed": seed, "path": str(path), "skipped": skipped,
+            "r2": scores, "mean_r2": mean_r2, "passed": bool(mean_r2 >= 0.90),
             "kill_condition": "mean R2 < 0.90 means the pipeline is broken; stop (spec 10)"}
 
 
 def experiment_b(seed: int = 0, root: Path | None = None, condition: str = "base",
-                 encoder: str = "dinov2_b", layer: int = 8, view: str = "cls") -> dict:
+                 encoder: str = "dinov2_b", layer: int = 8, view: str = "cls",
+                 force: bool = False) -> dict:
     """Selectivity control on every target (spec 10, Exp B / 8.5).
 
     Kill condition is a control above chance, which means split leakage.
     """
     from .stats import balanced_accuracy, r2_score
 
-    arrays = run_cell(encoder, condition, layer, view, seed, feature_module.TARGETS,
-                      root=root, control=True)
-    cell = cell_key(encoder, condition, layer, view, task="control")
-    path = _save("B", seed, _prefixed(cell, arrays), root)
+    cfg_hash = config_hash("B", seed, condition=condition, encoder=encoder, layer=layer, view=view)
+    done = None if force else completed("B", seed, cfg_hash, root)
+    if done is not None:
+        saved, path, skipped = _load_saved(done), done, True
+    else:
+        arrays = run_cell(encoder, condition, layer, view, seed, feature_module.TARGETS,
+                          root=root, control=True)
+        saved = _prefixed(cell_key(encoder, condition, layer, view, task="control"), arrays)
+        path, skipped = _save("B", seed, saved, root, cfg_hash=cfg_hash), False
 
     scores, flagged = {}, []
     for target in feature_module.TARGETS:
-        true_key = f"{condition}|{target}|y_true"
-        if true_key not in arrays:
+        y_true = _field(saved, target, "y_true")
+        y_pred = _field(saved, target, "y_pred")
+        if y_true is None or y_pred is None:
             continue
-        y_true, y_pred = arrays[true_key], arrays[f"{condition}|{target}|y_pred"]
         if target in feature_module.CLASSIFICATION_TARGETS:
             value = balanced_accuracy(y_true, y_pred)
             over = value > 0.60
@@ -264,15 +325,22 @@ def experiment_b(seed: int = 0, root: Path | None = None, condition: str = "base
         if over:
             flagged.append(target)
 
-    return {"exp": "B", "seed": seed, "path": str(path), "control_scores": scores,
-            "above_chance": flagged, "passed": not flagged,
+    return {"exp": "B", "seed": seed, "path": str(path), "skipped": skipped,
+            "control_scores": scores, "above_chance": flagged, "passed": not flagged,
             "kill_condition": "a control above chance means scene identity is leaking "
                               "across the split (spec 7.4, 8.5)"}
 
 
 def experiment_c(seed: int = 0, root: Path | None = None, condition: str = "base",
-                 encoders: Sequence[str] = ("random_b", "raw_pixel")) -> dict:
+                 encoders: Sequence[str] = ("random_b", "raw_pixel"),
+                 force: bool = False) -> dict:
     """Baselines across all targets (spec 10, Exp C / 8.4)."""
+    cfg_hash = config_hash("C", seed, condition=condition, encoders=list(encoders))
+    if not force:
+        done = completed("C", seed, cfg_hash, root)
+        if done is not None:
+            return _skip_report("C", seed, done)
+
     arrays: dict[str, np.ndarray] = {}
     cells = []
     for encoder in encoders:
@@ -284,20 +352,26 @@ def experiment_c(seed: int = 0, root: Path | None = None, condition: str = "base
                 arrays.update(_prefixed(cell, run_cell(
                     encoder, condition, layer, view, seed, feature_module.TARGETS, root=root)))
                 cells.append(cell)
-    path = _save("C", seed, arrays, root)
+    path = _save("C", seed, arrays, root, cfg_hash=cfg_hash)
     return {"exp": "C", "seed": seed, "path": str(path), "n_cells": len(cells)}
 
 
 def experiment_d(seed: int = 0, root: Path | None = None, condition: str = "base",
                  encoders: Sequence[str] = ("dinov2_b", "random_b"),
                  layers: Sequence[int] = MAIN_GRID_LAYERS,
-                 views: Sequence[str] = ("cls", "mean")) -> dict:
+                 views: Sequence[str] = ("cls", "mean"), force: bool = False) -> dict:
     """The main grid (spec 10, Exp D).
 
     2 encoders x 4 layers x 2 views x every target. All targets in a cell share
     one eigendecomposition, so the grid costs far less than the per-cell count
     suggests (see :mod:`physground.probes`).
     """
+    cfg_hash = config_hash("D", seed, condition=condition, encoders=list(encoders), layers=list(layers), views=list(views))
+    if not force:
+        done = completed("D", seed, cfg_hash, root)
+        if done is not None:
+            return _skip_report("D", seed, done)
+
     arrays: dict[str, np.ndarray] = {}
     cells = []
     for encoder in encoders:
@@ -307,13 +381,14 @@ def experiment_d(seed: int = 0, root: Path | None = None, condition: str = "base
                 arrays.update(_prefixed(cell, run_cell(
                     encoder, condition, layer, view, seed, feature_module.TARGETS, root=root)))
                 cells.append(cell)
-    path = _save("D", seed, arrays, root)
+    path = _save("D", seed, arrays, root, cfg_hash=cfg_hash)
     return {"exp": "D", "seed": seed, "path": str(path), "n_cells": len(cells), "cells": cells}
 
 
 def experiment_e(seed: int = 0, root: Path | None = None,
                  encoders: Sequence[str] = ("dinov2_b",),
-                 layers: Sequence[int] = (8, 11), views: Sequence[str] = ("cls", "mean")) -> dict:
+                 layers: Sequence[int] = (8, 11), views: Sequence[str] = ("cls", "mean"),
+                 force: bool = False) -> dict:
     """Occlusion, matched pairs (spec 10, Exp E / H4).
 
     Two families of cells, and the contrast between them is the point.
@@ -336,6 +411,12 @@ def experiment_e(seed: int = 0, root: Path | None = None,
     recovered 0.803 -- so the state was still in the representation and the
     transfer number was measuring the readout, not the encoder.
     """
+    cfg_hash = config_hash("E", seed, encoders=list(encoders), layers=list(layers), views=list(views))
+    if not force:
+        done = completed("E", seed, cfg_hash, root)
+        if done is not None:
+            return _skip_report("E", seed, done)
+
     arrays: dict[str, np.ndarray] = {}
     cells = []
     for encoder in encoders:
@@ -353,13 +434,14 @@ def experiment_e(seed: int = 0, root: Path | None = None,
                     root=root)))
                 cells.append(matched)
 
-    path = _save("E", seed, arrays, root)
+    path = _save("E", seed, arrays, root, cfg_hash=cfg_hash)
     return {"exp": "E", "seed": seed, "path": str(path), "n_cells": len(cells)}
 
 
 def experiment_f(seed: int = 0, root: Path | None = None, condition: str = "base",
                  video_encoders: Sequence[str] = ("videomae_b", "vjepa2"),
-                 frame_encoders: Sequence[str] = ("dinov2_b", "random_b")) -> dict:
+                 frame_encoders: Sequence[str] = ("dinov2_b", "random_b"),
+                 force: bool = False) -> dict:
     """Frame versus video encoders on the dynamic properties (spec 10, Exp F / H3).
 
     Restricted to :data:`PER_SCENE_TARGETS`. A video encoder returns one
@@ -372,6 +454,12 @@ def experiment_f(seed: int = 0, root: Path | None = None, condition: str = "base
     difference in effective sample size would be indistinguishable from a
     difference in representation.
     """
+    cfg_hash = config_hash("F", seed, condition=condition, video=list(video_encoders), frame=list(frame_encoders))
+    if not force:
+        done = completed("F", seed, cfg_hash, root)
+        if done is not None:
+            return _skip_report("F", seed, done)
+
     arrays: dict[str, np.ndarray] = {}
     cells: list[str] = []
 
@@ -396,7 +484,7 @@ def experiment_f(seed: int = 0, root: Path | None = None, condition: str = "base
             except FileNotFoundError:
                 continue
 
-    path = _save("F", seed, arrays, root)
+    path = _save("F", seed, arrays, root, cfg_hash=cfg_hash)
     return {"exp": "F", "seed": seed, "path": str(path), "n_cells": len(cells), "cells": cells}
 
 
@@ -411,7 +499,8 @@ def _video_layers(encoder: str) -> tuple[int, ...]:
 def experiment_g(seed: int = 0, root: Path | None = None, condition: str = "base",
                  encoders: Sequence[str] = ("dinov2_b", "random_b"),
                  layers: Sequence[int] = MAIN_GRID_LAYERS,
-                 views: Sequence[str] = ("cls", "mean"), epochs: int = 60) -> dict:
+                 views: Sequence[str] = ("cls", "mean"), epochs: int = 60,
+                 force: bool = False) -> dict:
     """H5, optional: does probe decodability predict latent-dynamics error?
 
     Spec 2 marks this a stretch goal to run only after 0-F complete cleanly, and
@@ -428,6 +517,12 @@ def experiment_g(seed: int = 0, root: Path | None = None, condition: str = "base
     from .latent_dynamics import build_transitions, fit_latent_predictor
     from .probes import LogisticProbe
     from .stats import balanced_accuracy
+
+    cfg_hash = config_hash("G", seed, condition=condition, encoders=list(encoders), layers=list(layers), views=list(views), epochs=epochs)
+    if not force:
+        done = completed("G", seed, cfg_hash, root)
+        if done is not None:
+            return _skip_report("G", seed, done)
 
     rows: list[dict] = []
     for encoder in encoders:
@@ -459,7 +554,7 @@ def experiment_g(seed: int = 0, root: Path | None = None, condition: str = "base
         arrays[column] = np.array([r[column] for r in rows], dtype=float)
     arrays["cell"] = np.array([f"{r['encoder']}|L{r['layer']}|{r['view']}" for r in rows])
 
-    path = _save("G", seed, arrays, root)
+    path = _save("G", seed, arrays, root, cfg_hash=cfg_hash)
     finite = np.isfinite(arrays["contact_balanced_accuracy"]) & np.isfinite(arrays["r2_vs_stationary"])
     correlation = (float(np.corrcoef(arrays["contact_balanced_accuracy"][finite],
                                      arrays["r2_vs_stationary"][finite])[0, 1])
@@ -471,7 +566,7 @@ def experiment_g(seed: int = 0, root: Path | None = None, condition: str = "base
 
 def experiment_spatial(seed: int = 0, root: Path | None = None, condition: str = "base",
                       encoder: str = "dinov2_b", layers: Sequence[int] = (8, 11),
-                      epochs: int = 30) -> dict:
+                      epochs: int = 30, force: bool = False) -> dict:
     """Spatial contact probe on patch tokens (spec 8.3).
 
     A per-patch linear readout, max-pooled over patches. It asks whether contact
@@ -490,6 +585,12 @@ def experiment_spatial(seed: int = 0, root: Path | None = None, condition: str =
     """
     from .probes import spatial_contact_probe
     from .stats import auroc, balanced_accuracy
+
+    cfg_hash = config_hash("S", seed, condition=condition, encoder=encoder, layers=list(layers), epochs=epochs)
+    if not force:
+        done = completed("S", seed, cfg_hash, root)
+        if done is not None:
+            return _skip_report("S", seed, done)
 
     arrays: dict[str, np.ndarray] = {}
     rows = []
@@ -525,7 +626,7 @@ def experiment_spatial(seed: int = 0, root: Path | None = None, condition: str =
                      "balanced_accuracy": float(balanced_accuracy(truth, predictions)),
                      "auroc": float(auroc(truth, scores))})
 
-    path = _save("S", seed, arrays, root)
+    path = _save("S", seed, arrays, root, cfg_hash=cfg_hash)
     return {"exp": "S", "seed": seed, "path": str(path), "layers": rows,
             "note": "spec 8.3; compare against the pooled-view contact probe in Exp D"}
 

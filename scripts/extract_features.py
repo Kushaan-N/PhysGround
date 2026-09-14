@@ -27,12 +27,18 @@ def main() -> None:
     parser.add_argument("--condition", default="base", choices=("base", "occluded"))
     parser.add_argument("--shard", type=int, default=0)
     parser.add_argument("--n-shards", type=int, default=1)
-    parser.add_argument("--batch-size", type=int, default=64)
+    parser.add_argument("--batch-size", type=int, default=64,
+                        help="scenes per forward pass for video encoders, frames for image "
+                             "encoders. Raise it on a large GPU; 64 is sized for modest VRAM.")
     parser.add_argument("--dtype", default="float16", choices=("float16", "float32"),
                         help="cached precision; fp16 is settled by Gate G4 (spec 3.6)")
     parser.add_argument("--no-patches", action="store_true",
                         help="skip patch tokens (~31 GB for dinov2_b; spec 7.3)")
     parser.add_argument("--device", default=None)
+    parser.add_argument("--decode-workers", type=int, default=None,
+                        help="threads decoding PNGs per batch. Defaults to min(8, cpu_count). "
+                             "PNG decode is CPU-bound and used to sit inline with the forward "
+                             "pass, so on a fast GPU the device waited on Pillow.")
     parser.add_argument("--force", action="store_true")
     parser.add_argument("--seed", type=int, default=0,
                         help="passed to encoders whose weights are sampled (random_b)")
@@ -59,7 +65,7 @@ def main() -> None:
     report = extract(args.encoder, args.condition, args.shard, args.n_shards,
                      batch_size=args.batch_size, dtype=args.dtype,
                      store_patches=not args.no_patches, force=args.force,
-                     encoder_kwargs=encoder_kwargs)
+                     encoder_kwargs=encoder_kwargs, decode_workers=args.decode_workers)
     print(json.dumps(report, indent=2, default=str), flush=True)
 
 

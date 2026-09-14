@@ -109,3 +109,45 @@ def test_gate_g2_returns_no_automated_verdict(small_corpus, data_root):
     report = G.gate_g2([("base", i) for i in range(6)], data_root / "sheet.png", n_frames=6)
     assert report["passed"] is None, "G2 must not claim a verdict a human has not given"
     assert (data_root / "sheet.png").exists()
+
+
+# --------------------------------------------------------------------------- #
+# Experiment idempotence (spec 0.6)
+# --------------------------------------------------------------------------- #
+
+def test_experiment_skips_completed_work_but_keeps_its_verdict(small_corpus):
+    """Spec 0.6 covers "every generation and training step", experiments included.
+
+    The subtlety is the kill-switch. A skipped Experiment A that reported only
+    "skipped" would let a resumed run sail past a stop condition that had
+    already failed, so the verdict is recomputed from the cached archive rather
+    than omitted.
+    """
+    from physground import experiments as E
+    from physground.features import extract
+
+    extract("raw_pixel", "base", 0, 1, store_patches=False, progress_every=0)
+
+    first = E.experiment_a(seed=0, encoder="raw_pixel", layer=0, view="mean")
+    assert first["skipped"] is False
+    assert "passed" in first and "mean_r2" in first
+
+    second = E.experiment_a(seed=0, encoder="raw_pixel", layer=0, view="mean")
+    assert second["skipped"] is True
+    # Same verdict, recomputed from cache rather than dropped.
+    assert second["passed"] == first["passed"]
+    assert second["mean_r2"] == pytest.approx(first["mean_r2"], abs=1e-12)
+
+    forced = E.experiment_a(seed=0, encoder="raw_pixel", layer=0, view="mean", force=True)
+    assert forced["skipped"] is False
+
+
+def test_experiment_config_hash_changes_with_the_grid():
+    """A different cell grid must not be mistaken for finished work."""
+    from physground.experiments import config_hash
+
+    base = config_hash("D", 0, condition="base", layers=[2, 5, 8, 11])
+    assert base == config_hash("D", 0, condition="base", layers=[2, 5, 8, 11])
+    assert base != config_hash("D", 1, condition="base", layers=[2, 5, 8, 11])
+    assert base != config_hash("D", 0, condition="base", layers=[2, 5])
+    assert base != config_hash("D", 0, condition="occluded", layers=[2, 5, 8, 11])
