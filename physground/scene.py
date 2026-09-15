@@ -475,11 +475,19 @@ def build_mjcf(factors: dict, *, occluded: bool, arm: ArmSpec = ARM,
 
     if occluded:
         occ = occluder_params(factors, cam)
+        # contype/conaffinity 0: the slab occludes the view and nothing else.
+        # With default collision the push squeezed the object against the slab
+        # (it sits ~0.1 m past the contact interface) and the kp=1000 actuator
+        # ejected it -- 505 of 1000 occluded scenes diverged from their matched
+        # base pair, 32 left the camera frame entirely. Spec 5.5 defines the
+        # pair as "identical ... plus" the slab, and the prereg's H4 analysis
+        # compares pairs at matched frame index, both of which require the
+        # physics to be untouched. See DEVIATIONS.md 13.
         parts.append(f"""    <geom name="occluder" type="box"
           pos="{occ['pos'][0]:.6f} {occ['pos'][1]:.6f} {occ['pos'][2]:.6f}"
           size="{occ['size'][0]:.6f} {occ['size'][1]:.6f} {occ['size'][2]:.6f}"
           euler="{occ['euler_rad'][0]:.6f} {occ['euler_rad'][1]:.6f} {occ['euler_rad'][2]:.6f}"
-          rgba="0.45 0.45 0.47 1" friction="{inert_friction}"/>
+          rgba="0.45 0.45 0.47 1" contype="0" conaffinity="0"/>
 """)
 
     q1_home, q2_home = planar_ik(arm.home_radius, arm.home_angle, arm)
