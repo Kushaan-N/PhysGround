@@ -278,6 +278,57 @@ logic underneath is directly testable. No module in §12's list was removed.
 
 ---
 
+## 13. The occluder no longer collides
+
+**Spec:** §5.5 describes the occluded condition as "identical to the base
+condition, plus a static box geom positioned to occlude the region around the
+predicted contact point". The prereg's H4 analysis compares base and occluded
+frames paired at matched scene and frame index.
+
+**Problem:** the slab was emitted with MuJoCo's default `contype`/`conaffinity`,
+so it collided. It stands roughly 0.1 m past the contact interface, inside the
+push's travel, and the kp=1000 position actuator happily squeezed the object
+against it. Measured on the full 3,000+1,000 corpus (master seed 0), generated
+2026-09-15 on Unity:
+
+| quantity | value |
+|---|---|
+| occluded scenes whose object trajectory diverges from the matched base scene | 505 / 1,000 |
+| diverging by more than 1 cm | 460 |
+| worst divergence | 1.87 m |
+| scenes where the ejected object left the camera frame (final 1–2 frames) | 32 |
+
+Divergence always begins at the `sustained_contact` phase, exactly when the push
+closes the object to the slab's standoff distance. The pilot corpus was
+generated with the same code, so its Experiment E transfer numbers carry the
+same contamination — 11 of the 32 out-of-frame scenes fall inside the pilot's
+500-scene range. `scripts/check_corpus.py` surfaced the symptom
+(`all_frames_in_frame` 968/1000); the divergence measurement located the cause.
+
+**Why it matters:** the paired H4 comparison attributes any base-versus-occluded
+difference to visibility. With the slab colliding, the occluded condition also
+changed the physics — different trajectories, different stopping points,
+occasionally a different contact profile — so the pairing conflated three
+treatments (occlusion, novel-object presence, altered dynamics), not the two
+already recorded in `RESULTS_pilot.md`.
+
+**Change:** the occluder geom is now `contype="0" conaffinity="0"` — it occludes
+the view and touches nothing. Matched pairs are bit-identical in physics by
+construction;
+`tests/test_scene.py::test_occluder_leaves_the_physics_untouched` asserts zero
+trajectory divergence on three of the previously worst-diverging scenes and
+fails on the old behaviour. The occluded corpus and everything downstream of it
+must be regenerated. One visual consequence is accepted: in scenes where the
+object's (now unperturbed) path crosses the slab's footprint, the render shows
+the object clipping through it. The treatment of interest is what the camera
+can see, and the per-frame `occlusion_fraction` covariate measures exactly
+that, so a physically impossible-looking frame is preferable to physically
+different dynamics.
+
+**Where:** `physground/scene.py::build_mjcf`.
+
+---
+
 ## Non-deviations worth recording
 
 These looked like they might need a change and did not:
