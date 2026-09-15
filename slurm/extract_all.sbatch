@@ -2,6 +2,12 @@
 #SBATCH --job-name=pg-extract-all
 #SBATCH --partition=gpu
 #SBATCH --gres=gpu:1
+# torch 2.14+cu130 ships kernels for sm_75+ only (torch.cuda.get_arch_list()).
+# Unity's gpu partition still fields Maxwell/Pascal/Volta cards -- an
+# unconstrained job drew a Tesla M40 and died on the first conv with
+# cudaErrorNoKernelImageForDevice. Every Turing-or-newer model on the
+# partition, by node feature name:
+#SBATCH --constraint=2080_ti|rtx_8000|a100|a40|a4000|a16|l4|l40s|h100
 #SBATCH --cpus-per-task=4
 #SBATCH --mem=16G
 #SBATCH --time=08:00:00
