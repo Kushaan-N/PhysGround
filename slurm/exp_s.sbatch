@@ -2,7 +2,7 @@
 #SBATCH --job-name=pg-exp-s
 #SBATCH --partition=cpu
 #SBATCH --cpus-per-task=2
-#SBATCH --mem=32G
+#SBATCH --mem=64G
 #SBATCH --time=06:00:00
 #SBATCH --output=slurm/logs/exp_s_%j.out
 #SBATCH --error=slurm/logs/exp_s_%j.err
@@ -13,8 +13,9 @@
 #
 # --jobs stays 1 because each worker holds its own copy of the patch-token
 # matrix, which is gigabytes -- parallel seeds here trade a wall-clock win for
-# an OOM (HANDOFF 5.10). 32G for the resident patch tokens; everything is
-# resumable per seed if the time limit bites.
+# an OOM (HANDOFF 5.10). 64G, not the handoff's 32G estimate: the 23G fp16
+# patch cache upcasts to fp32 in the solver (~46G resident), and 32G was
+# OOM-killed during the initial load. Seeds resume individually if interrupted.
 set -euo pipefail
 
 mkdir -p slurm/logs
