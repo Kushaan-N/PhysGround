@@ -293,24 +293,47 @@ def _assert_no_duplicate_rows(scene_index: np.ndarray, frame_index: np.ndarray,
 
 def load_patches(encoder: str, condition: str, layer: int, root: Path | None = None,
                  dtype=np.float32) -> tuple[np.ndarray, np.ndarray]:
-    """Load cached patch tokens for one layer. Returns ``(x, scene_index)``."""
+    """Load cached patch tokens for one layer. Returns ``(x, scene_index)``.
+
+    Written in two passes for peak memory, not elegance. The obvious
+    collect-concatenate-sort holds fp32 copies of every shard, the
+    concatenated array, *and* the fancy-indexed sorted array at once — 3× the
+    ~24 GB the full-corpus layer actually needs, which OOM-killed a 64 GB job
+    during load. Pass one reads only the index columns and computes each row's
+    sorted destination; pass two allocates the final array once and
+    scatter-writes each fp16 shard straight into place, upcasting on
+    assignment. Peak is the final array plus one shard.
+    """
     directory = (Path(root) / "features" / encoder / condition) if root else P.features_dir(encoder, condition)
     shards = sorted(directory.glob("shard_*_patch.npz"))
     if not shards:
         raise FileNotFoundError(f"no patch shards under {directory}")
     key = f"L{layer}_patch"
-    blocks, scenes, frames = [], [], []
+
+    scenes, frames = [], []
     for shard in shards:
         with np.load(shard) as archive:
-            blocks.append(np.asarray(archive[key], dtype=dtype))
+            if key not in archive.files:
+                raise KeyError(f"{shard} has no {key}")
             scenes.append(np.asarray(archive["scene_index"]))
             frames.append(np.asarray(archive["frame_index"]))
-    x = np.concatenate(blocks)
     scene_index = np.concatenate(scenes)
     frame_index = np.concatenate(frames)
     order = np.lexsort((frame_index, scene_index))
     _assert_no_duplicate_rows(scene_index[order], frame_index[order], directory)
-    return x[order], scene_index[order]
+    destination = np.empty(order.size, dtype=np.int64)
+    destination[order] = np.arange(order.size)
+
+    x = None
+    offset = 0
+    for shard in shards:
+        with np.load(shard) as archive:
+            block = archive[key]
+            if x is None:
+                x = np.empty((order.size, *block.shape[1:]), dtype=dtype)
+            x[destination[offset:offset + len(block)]] = block
+            offset += len(block)
+    return x, scene_index[order]
 
 
 #: Memoised ground truth, keyed by (condition, root, scene indices).
