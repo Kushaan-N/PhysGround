@@ -329,6 +329,55 @@ different dynamics.
 
 ---
 
+## 14. Experiment A's kill condition: measured 0.8989 against 0.90, proceeded on PI instruction
+
+**Spec:** §10 stops the pipeline if the positive control's mean R² on
+`obj_pos_x/y` is below 0.90; `prereg.md` §5 fixes that evaluation at the full
+3,000-scene corpus.
+
+**Measured (2026-09-15, full corpus, seed 0, dinov2_b L8 cls):** `obj_pos_x`
+0.923, `obj_pos_y` 0.875, mean **0.8989**. The kill-switch fired and stopped
+the grid, as specified.
+
+**Diagnosis, before any decision was taken:**
+
+| quantity | x | y |
+|---|---|---|
+| RMSE on the 224 px image | 6.37 px | **6.14 px** |
+| std of the target | 22.95 px | 17.36 px |
+
+The probe is *more* accurate on y than on x in pixels; y's lower R² is entirely
+the denominator. The camera's tilt foreshortens the vertical image axis to 57%
+of the horizontal variance, so identical pixel accuracy mechanically reads
+~0.05 lower R² on y — the threshold implicitly assumed equal-variance axes.
+Two further contributors, both artifacts of the same class:
+
+- Airborne frames (from the spec-required `spawn_height` deviation, §3) probe
+  worse on both axes (x 0.928→0.859, y 0.872→0.790 supported→airborne): the
+  v-coordinate of an airborne object is a two-to-one function of world state.
+  Restricting to supported frames alone moves the mean to 0.8999.
+- The worst per-scene y R² values (−205, −159) are scenes whose within-scene
+  vertical motion is under 1.5 px of std — near-zero denominators, not bad
+  predictions; the identical artifact was documented for the H4 curve in §9.
+
+A cluster bootstrap over scenes puts the mean at 0.8989 with 95% CI
+**[0.890, 0.907]**: the pre-registered threshold lies inside the interval, and
+P(mean ≥ 0.90) = 0.39. The measurement does not distinguish the observed value
+from the threshold.
+
+**Decision:** the PI instructed the pipeline to continue, with stop decisions
+reserved for compute overruns rather than results. Recorded here rather than
+tuned away: the threshold was not edited, the probe was not adjusted, and the
+0.8989 stands in the record. The reading supported by the diagnosis is that
+the positive control demonstrates the pipeline's sensitivity (≈6 px RMSE on
+both axes) and the composite threshold under-credits the vertical axis for
+geometric reasons the spec did not anticipate.
+
+**Where:** `physground/experiments.py` (Exp A verdict), this analysis from
+`results/A/seed_00/raw.npz`.
+
+---
+
 ## Non-deviations worth recording
 
 These looked like they might need a change and did not:
