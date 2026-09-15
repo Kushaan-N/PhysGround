@@ -215,8 +215,13 @@ class LogisticProbe:
     that predicts the majority class everywhere.
     """
 
+    # max_iter was 500 until the full 3,000-scene corpus: lbfgs converged
+    # within it at pilot scale (1,500 scenes) and did not at 2x the rows, which
+    # `fit` correctly turned into a hard error rather than a truncated probe.
+    # 2000 is the deliberate raise that error asks for; tol is unchanged, so
+    # the solution quality bar is identical and only the iteration budget grew.
     def __init__(self, cs: Sequence[float] = LOGISTIC_CS, n_folds: int = 5, seed: int = 0,
-                 max_iter: int = 500):
+                 max_iter: int = 2000):
         self.cs = np.asarray(cs, dtype=float)
         self.n_folds = int(n_folds)
         self.seed = int(seed)
