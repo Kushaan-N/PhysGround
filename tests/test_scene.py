@@ -10,6 +10,7 @@ import pytest
 
 from physground import factors as F
 from physground import ground_truth as G
+from physground import rollout as R
 from physground import scene as S
 
 
@@ -119,3 +120,25 @@ def test_distractor_is_never_on_the_push_ray():
         clearance = perpendicular - factors["distractor_size"] * math.sqrt(2) - S.ARM.finger_radius
         worst = min(worst, clearance)
     assert worst > 0.01, f"distractor comes within {worst:.4f} m of the push ray"
+
+
+@pytest.mark.parametrize("index", [41, 202, 542])
+def test_occluder_leaves_the_physics_untouched(index):
+    """Spec 5.5: the occluded condition is "identical ... plus" the slab.
+
+    The prereg's H4 analysis pairs base and occluded frames at matched scene
+    and frame index, which is only meaningful if the slab changes the view and
+    nothing else. With default collision it did not: the push squeezed the
+    object against the slab and the actuator ejected it, diverging 505 of the
+    1,000 occluded scenes from their base pairs (DEVIATIONS.md 13). These three
+    indices are drawn from the scenes that diverged worst, up to 1.9 m.
+    """
+    traces = {}
+    for occluded in (False, True):
+        factors = F.sample_factors(index, 0)
+        model = mujoco.MjModel.from_xml_string(S.build_mjcf(factors, occluded=occluded))
+        traces[occluded] = R.simulate(model, mujoco.MjData(model), factors,
+                                      G.resolve_ids(model))
+    divergence = float(np.abs(traces[True]["obj_pos"] - traces[False]["obj_pos"]).max())
+    assert divergence < 1e-12, f"slab perturbs the trajectory by {divergence:.3g} m"
+    assert np.array_equal(traces[True]["contact"], traces[False]["contact"])
