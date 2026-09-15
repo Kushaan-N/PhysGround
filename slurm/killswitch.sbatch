@@ -1,8 +1,8 @@
 #!/bin/bash
 #SBATCH --job-name=pg-killswitch
 #SBATCH --partition=cpu
-#SBATCH --cpus-per-task=8
-#SBATCH --mem=32G
+#SBATCH --cpus-per-task=4
+#SBATCH --mem=16G
 #SBATCH --time=03:00:00
 #SBATCH --output=slurm/logs/killswitch_%j.out
 #SBATCH --error=slurm/logs/killswitch_%j.err
@@ -25,7 +25,7 @@ set -euo pipefail
 mkdir -p slurm/logs
 export MUJOCO_GL=osmesa
 export PYOPENGL_PLATFORM=osmesa
-export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-8}"
+export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-4}"
 export PYTHONPATH="${PWD}:${PWD}/scripts:${PYTHONPATH:-}"
 
 echo "[slurm] node=$(hostname) job=${SLURM_JOB_ID}"
