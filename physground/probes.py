@@ -215,17 +215,18 @@ class LogisticProbe:
     that predicts the majority class everywhere.
     """
 
-    # max_iter was 500 until the full 3,000-scene corpus: lbfgs converged
-    # within it at pilot scale (1,500 scenes) and did not at 2x the rows --
-    # nor at 2,000. The slow fits are the C=1e4 end of the grid, where the
-    # model is essentially unregularised and near-separable data makes lbfgs
-    # crawl; an iteration at these sizes costs milliseconds, so a 20,000
-    # budget is minutes of worst case, not hours. tol is unchanged: the
-    # solution quality bar is identical and only the iteration budget grew.
-    # `fit` still hard-errors at the cap rather than reporting a truncated
-    # probe.
+    # max_iter counts Newton steps, not lbfgs steps, and 100 is generous: the
+    # solver converges in 4-8 on this data at every C in the grid. lbfgs
+    # (max_iter=500) converged at pilot scale and fell apart at the full
+    # corpus -- measured on raw_pixel/contact_state at 30k rows, it could not
+    # reach tol=1e-4 within 1,000 iterations even at C=100, at ~0.26 s per
+    # iteration, so no realistic budget saves it. newton-cholesky pays ~2nd^2
+    # flops per step but its step count is small and independent of
+    # conditioning, which is exactly what the near-unregularised end of the C
+    # grid needs. `fit` still hard-errors at the cap rather than reporting a
+    # truncated probe.
     def __init__(self, cs: Sequence[float] = LOGISTIC_CS, n_folds: int = 5, seed: int = 0,
-                 max_iter: int = 20000):
+                 max_iter: int = 100):
         self.cs = np.asarray(cs, dtype=float)
         self.n_folds = int(n_folds)
         self.seed = int(seed)
@@ -239,12 +240,20 @@ class LogisticProbe:
         # default has always been L2, and scikit-learn 1.8 deprecated passing it
         # explicitly, so naming it earns a FutureWarning per fit now and a
         # TypeError in 1.10 -- with no change in the model being fit.
-        return LogisticRegression(solver="lbfgs", max_iter=self.max_iter,
+        # warm_start matters even for a solver this direct: along the
+        # ascending C path the previous optimum is a near-solution for the
+        # next C, and the measured step counts drop from 4-8 cold to
+        # [4,4,3,3,2,2,2,2,1] warm -- a full 9-C fold path in 47 s at 24k x
+        # 1024 fp64.
+        return LogisticRegression(solver="newton-cholesky", max_iter=self.max_iter,
                                   warm_start=True, tol=1e-4)
 
     def fit(self, x: np.ndarray, y: np.ndarray, scene_index: np.ndarray) -> "LogisticProbe":
         from .stats import balanced_accuracy
 
+        # fp64 throughout. fp32 was tried for the 2x BLAS win and rejected on
+        # measurement: newton-cholesky could no longer reach tol=1e-4 and ran
+        # to the iteration cap -- 99 steps where fp64 takes 8.
         x = np.asarray(x, dtype=np.float64)
         y = np.asarray(y).astype(int)
         self._mean, self._scale = _standardiser(x)
