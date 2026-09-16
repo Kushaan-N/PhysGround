@@ -33,3 +33,6 @@ wandb/
 # SLURM
 slurm-*.out
 slurm-*.err
+
+# SLURM job logs -- runtime artifacts, one file per job
+slurm/logs/
