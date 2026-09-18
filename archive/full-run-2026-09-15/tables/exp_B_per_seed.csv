@@ -1,0 +1,11 @@
+exp,seed,encoder,train_condition,layer,view,task,eval_condition,target,n_rows,n_scenes,metric,value,ci_low,ci_high,trivial,majority_rate
+B,0,dinov2_b,base,8,cls,control,base,contact_state,6000,600,balanced_accuracy,0.49402777777777773,0.4872881944444444,0.5008333333333334,0.5,0.6
+B,0,dinov2_b,base,8,cls,control,base,contact_state,6000,600,auroc,0.4958208333333333,0.48458691550925925,0.5071454340277777,0.5,0.6
+B,0,dinov2_b,base,8,cls,control,base,ee_obj_dist,6000,600,r2,-0.0012959131241536692,-0.002409470833809252,-0.00032675190096270837,0.0,
+B,0,dinov2_b,base,8,cls,control,base,friction_slide,6000,600,r2,-0.014948475917006432,-0.029436364570815565,-0.005601877277303824,0.0,
+B,0,dinov2_b,base,8,cls,control,base,log_mass,6000,600,r2,-0.008505055995904343,-0.021279815327287226,-0.001158646732480431,0.0,
+B,0,dinov2_b,base,8,cls,control,base,obj_pos_x,6000,600,r2,-0.004055005861107075,-0.01083897526912322,0.00046598277554976215,0.0,
+B,0,dinov2_b,base,8,cls,control,base,obj_pos_y,6000,600,r2,-0.002452203198714198,-0.011526755783500642,0.0034353325201488807,0.0,
+B,0,dinov2_b,base,8,cls,control,base,obj_speed,6000,600,r2,-0.000714025330951884,-0.002004326932472622,0.000383170439759994,0.0,
+B,0,dinov2_b,base,8,cls,control,base,support_state,6000,600,balanced_accuracy,0.5,0.5,0.5,0.5,0.8355
+B,0,dinov2_b,base,8,cls,control,base,support_state,6000,600,auroc,0.5084429924950953,0.4887448579574684,0.5273125074200505,0.5,0.8355

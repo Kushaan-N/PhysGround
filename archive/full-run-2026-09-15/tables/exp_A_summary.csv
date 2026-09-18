@@ -1,0 +1,3 @@
+exp,encoder,train_condition,layer,view,task,eval_condition,target,metric,value,ci_low,ci_high,seed_sd,n_seeds,trivial,majority_rate
+A,dinov2_b,base,8,cls,real,base,obj_pos_x,r2,0.9229364262866018,0.9147985643783948,0.9303013561501443,0.0,1,0.0,
+A,dinov2_b,base,8,cls,real,base,obj_pos_y,r2,0.8747790455008906,0.8597777288590267,0.8868328603938976,0.0,1,0.0,
