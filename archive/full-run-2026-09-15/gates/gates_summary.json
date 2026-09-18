@@ -1,0 +1,15 @@
+{
+  "G4": {
+    "abs_difference": 4.198943977673508e-05,
+    "encoder": "dinov2_b",
+    "gate": "G4",
+    "layer": 8,
+    "n_rows": 2000,
+    "n_scenes": 200,
+    "passed": true,
+    "r2_float16": 0.8325225878238895,
+    "r2_float32": 0.8324805983841128,
+    "tolerance": 0.01,
+    "view": "cls"
+  }
+}

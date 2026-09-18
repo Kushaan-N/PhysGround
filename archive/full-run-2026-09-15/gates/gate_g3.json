@@ -1,0 +1,50 @@
+{
+  "checks": [
+    {
+      "bounds": [
+        0.25,
+        0.55
+      ],
+      "name": "contact_positive_rate",
+      "passed": true,
+      "value": 0.4
+    },
+    {
+      "name": "support_not_constant",
+      "note": "constant support_state must be dropped from the probe set (spec 6.3)",
+      "passed": true,
+      "value": 0.846
+    },
+    {
+      "name": "all_targets_finite",
+      "passed": true,
+      "value": 0
+    },
+    {
+      "bounds": [
+        0.01,
+        1.0
+      ],
+      "n": 50,
+      "name": "ks:mass",
+      "passed": true,
+      "statistic": 0.10365635999156511,
+      "value": 0.618566353635497
+    },
+    {
+      "bounds": [
+        0.01,
+        1.0
+      ],
+      "n": 50,
+      "name": "ks:friction_slide",
+      "passed": true,
+      "statistic": 0.08080172994862433,
+      "value": 0.8736262456360749
+    }
+  ],
+  "gate": "G3",
+  "n_frames": 500,
+  "n_scenes": 50,
+  "passed": true
+}
