@@ -6,10 +6,23 @@ or points at the file that measures it; where a number is an estimate rather
 than an observation, it says so.
 
 **Repo:** `git@github.com:Kushaan-N/PhysGround.git`, branch `main`.
-**State at handoff:** working tree clean, 83 tests passing, everything below
+**State at handoff:** working tree clean, 86 tests passing, everything below
 reproducible from `main`. `git log --oneline` reads as a narrative — each commit
 message says what changed and, where a measurement forced it, what the
 measurement was.
+
+> **Update, 2026-09-15 (second handoff).** The full-corpus run is DONE: 3,000 +
+> 1,000 scenes, all encoders, Experiments A–F and S at five probe seeds,
+> figures and hypothesis tests. Read `RESULTS_full.md` for the numbers and
+> `DEVIATIONS.md` §13–14 for the two substantive events: the occluder was
+> found to collide (half the matched pairs had divergent physics — fixed,
+> occluded corpus regenerated) and Experiment A landed at 0.8989 against the
+> 0.90 kill threshold (diagnosed as a variance artifact of the camera
+> geometry; the PI directed the run to continue with the number on record).
+> The raw arrays, tables, figures, and gate outputs of that run are committed
+> under `archive/full-run-2026-09-15/` — the machine that produced them was
+> deleted, so the repo is the only copy. §3 and §5 below are updated; new
+> traps found during the run are §5.11–5.15. Remaining work is §9.
 
 ---
 
@@ -51,10 +64,12 @@ Read in this order:
 |---|---|
 | `HANDOFF.md` | this file |
 | `spec.md` | **the source of truth.** If your priors conflict with it, follow it |
-| `DEVIATIONS.md` | all 12 departures from the spec, each with the measurement that forced it |
-| `RESULTS_pilot.md` | every pilot number, including the H4 refutation |
+| `DEVIATIONS.md` | all 14 departures from the spec, each with the measurement that forced it |
+| `RESULTS_full.md` | **the full-corpus numbers** — 5 seeds, clean occluder; supersedes the pilot |
+| `RESULTS_pilot.md` | pilot numbers; note its Exp E ran on the colliding occluder (§5.11) |
 | `prereg.md` | effect size, layer set, baselines — fixed before Exp D, do not change |
 | `README.md` | orientation for a human reader |
+| `archive/full-run-2026-09-15/` | raw arrays, tables, figures, gates of the full run — the only surviving copy |
 
 `DEVIATIONS.md` matters more than it looks. Several spec instructions are
 internally inconsistent (notably Gate G1's threshold versus its sample size),
@@ -74,26 +89,32 @@ re-resolve one.
   `raw_pixel`, `videomae_b`, `vjepa2`)
 - Experiments A, B, C, D, E, F — run on 1,500 base + 500 occluded scenes
 - Figures 1–4, hypothesis tests with Holm and TOST
-- 83 tests, ~9 s, no checkpoint downloads
+- 86 tests, ~9 s, no checkpoint downloads
 
-### Implemented and unit-tested, but never run at scale
+### Done in the 2026-09-15 full run (previously listed as not-run)
+
+Full corpus (3,000+1,000, with the §5.11 occluder fix), Experiment S at five
+seeds, five probe seeds across C–F, G4, and the figures. Results in
+`RESULTS_full.md`; raw arrays in `archive/full-run-2026-09-15/`.
+
+### Not done
 
 | Item | Why not | What it needs |
 |---|---|---|
-| **Experiment S** (spatial contact probe, spec §8.3) | needs the patch-token cache, ~24 GB | extract without `--no-patches` |
-| **Experiment G** (H5 latent dynamics) | optional stretch goal | run only after A–F are clean |
-| **5 probe seeds** | pilot ran 1 | `--seed 0,1,2,3,4`; spec §3.5 requires 5 for every reported cell |
-| **Full corpus** | pilot ran 1,500+500 | spec §5.4 wants 3,000+1,000 |
+| **v2 occluder** (slab in both conditions, placement varied) | design decision pending: third condition vs replacement | scene.py changes + tests, ~2 min corpus, ~20 min GPU, ~15 min probes |
+| **Experiment G** (H5 latent dynamics) | optional stretch goal, spec ranks it last | ~4–6 GPU-hr; code in `latent_dynamics.py`, unit-tested, never run at scale |
 
-### The one open question that matters
+### The open question of the first handoff, resolved
 
-**Experiment A is at threshold, not over it.** `obj_pos_x` R² = 0.907, but the
-mean of x and y is 0.888 against the spec's 0.90 kill condition. The learning
-curve was still climbing (0.709 → 0.769 → 0.800 → 0.817 at 60/120/180/240
-training scenes), which is why `prereg.md` declares that threshold as applying
-at the **full 3,000-scene corpus**. Generating the full corpus and re-checking
-Exp A is therefore the first real task. If it still misses 0.90 at 3,000 scenes,
-that is a genuine signal something is wrong — do not wave it through.
+**Experiment A at the full corpus: mean R² = 0.8989 vs the 0.90 threshold**
+(`obj_pos_x` 0.923, `obj_pos_y` 0.875). Diagnosed before proceeding
+(`DEVIATIONS.md` §14): the probe's pixel RMSE is *better* on y than x
+(6.14 vs 6.37 px); y's lower R² is the camera's foreshortened vertical
+variance (0.57× of x) plus airborne frames from the spec-required
+`spawn_height` factor, and the threshold sits inside the bootstrap 95% CI
+[0.890, 0.907]. The PI directed the pipeline to continue; the number stands
+unedited. If you rerun and see ~0.899 again, that is this known geometry
+artifact, not a new regression — but if it *drops*, investigate.
 
 ---
 
@@ -282,7 +303,7 @@ partition; spec §3.5 wants five of those over one fixed corpus.
 | `make features` | all encoders, both conditions, no patch tokens |
 | `make probes` | A,B as kill-switches, then C,D,E,F over `$(SEEDS)`, `JOBS=` workers |
 | `make figures` | regenerate every table and figure |
-| `make test` | the 83 tests |
+| `make test` | the 86 tests |
 | `make clean-outputs` | delete everything regenerable; never touches code |
 
 Override the defaults inline: `N_BASE=3000 SEEDS=0,1,2,3,4 JOBS=5 make probes`.
@@ -410,11 +431,63 @@ minutes that parallelises to ~10.
 
 Each worker holds its own copy of the feature matrix. For the pooled views that
 is ~100 MB per worker and irrelevant. For **experiment S it is gigabytes**,
-because patch tokens are ~60× the pooled payload — keep `--jobs 1` there.
+because patch tokens are ~60× the pooled payload — keep `--jobs 1` there, and
+budget **64 GB** for the job: the 23 GB fp16 patch cache upcasts to fp32 in
+the solver, and 32 GB (this handoff's original estimate) was OOM-killed
+during the load.
 
-Workers pin themselves to one BLAS thread. Without that, N workers each try to
-use every core and oversubscribe the machine N-fold, which is slower than
-running serially rather than faster.
+Workers pin themselves to one BLAS thread **via `setdefault`**, so an
+explicitly exported `OMP_NUM_THREADS` wins. With the newton-cholesky solver
+(§5.12) the pin is no longer optimal: its Newton steps are dense `gemm` that
+scales to ~4 threads, which is why `slurm/grid.sbatch` runs 5 workers × 4
+threads on 21 cores. The 1-thread advice stands for anything gemv-bound.
+
+### 5.11 The occluder collided until 2026-09-15
+
+The slab was emitted with MuJoCo's default `contype`/`conaffinity` and stood
+inside the push's travel: the actuator squeezed the object against it and
+505/1,000 occluded scenes diverged from their matched base pairs, 32 ejected
+out of frame entirely. Every occluded render looked perfect. Fixed with
+`contype="0" conaffinity="0"` (visual-only slab);
+`tests/test_scene.py::test_occluder_leaves_the_physics_untouched` fails on
+the old behaviour in 0.7 s. Full measurements in `DEVIATIONS.md` §13. Any
+corpus generated before commit `9416ba0` has broken pairing — regenerate.
+
+### 5.12 lbfgs stops converging between 15k and 30k rows
+
+The logistic probes converged under lbfgs at pilot scale and could not reach
+tol=1e-4 within 1,000 iterations at the full corpus — even at C=100, at
+~0.26 s/iteration. No iteration budget fixes it (500 → 2,000 → 20,000 all
+failed); a 21-core grid job burned 3h20 without finishing Experiment C.
+`LogisticProbe` now uses `newton-cholesky` with a warm-started ascending C
+path: measured step counts [4,4,3,3,2,2,2,2,1] over the 9-C path, a full
+fold path in 47 s, and the whole C,D,E,F × 5-seed grid in 39 minutes.
+fp32 was tried for the 2× BLAS win and rejected: the solver runs to the cap
+instead of converging. Same objective, same tol — the probe definition is
+unchanged.
+
+### 5.13 Loading patch tokens the obvious way is 3× peak memory
+
+`load_patches` used to collect fp32 copies of every shard, concatenate, then
+fancy-index sort — ~70 GB transient for a layer whose final array is 24 GB.
+It now reads the index columns first, computes each row's sorted destination,
+and scatter-writes each fp16 shard into one preallocated array. Peak is the
+final array plus one shard. Do not "simplify" it back.
+
+### 5.14 Old cluster GPUs silently lack kernels for current torch
+
+torch 2.14+cu130 ships kernels for sm_75+ only (`torch.cuda.get_arch_list()`).
+Unity's `gpu` partition still fields Maxwell/Pascal/Volta cards; an
+unconstrained job drew a Tesla M40 and died on the first conv with
+`cudaErrorNoKernelImageForDevice`. `slurm/extract_all.sbatch` carries the
+constraint (`2080_ti|rtx_8000|a100|a40|a4000|a16|l4|l40s|h100`); keep an
+equivalent on any new cluster.
+
+### 5.15 `sbatch --wrap` runs under sh, not bash
+
+A wrapped one-liner beginning `set -euo pipefail` dies instantly ("Illegal
+option -o pipefail") and takes its dependency chain with it. Write a script
+file with a bash shebang instead — that is why `slurm/check.sbatch` exists.
 
 ---
 
@@ -524,21 +597,34 @@ S.occlusion_curve("E", 0, ("contact_state", "obj_pos_x"))           # H4, paired
 
 ## 9. Suggested order of work
 
-1. **Full corpus + re-check Experiment A.** The only open correctness question.
-   If the positive control still misses 0.90 at 3,000 scenes, stop and diagnose.
-2. **Five probe seeds across C, D, E, F.** Spec §3.5 requires it for every
-   reported cell; the pilot has one.
-3. **Experiment S** (spatial contact probe). Needs the patch cache. It is the
-   first thing a reviewer asks about a null on pooled features.
-4. **The v2 occluder** (§6). Turns the H4 refutation from a confound into a
-   clean result.
-5. **Experiment G / H5.** Optional, last.
+Items 1–3 of the original list (full corpus + Exp A recheck, five seeds
+across C–F, Experiment S) were completed in the 2026-09-15 run — see
+`RESULTS_full.md`. What remains:
+
+1. **The v2 occluder** (§6). Slab in *both* conditions, varying only its
+   placement (beside vs in front of the contact region), so the
+   novel-object-presence and visibility-loss explanations of the H4 result
+   separate. With the §5.11 fix the slab is visual-only, so a v2 pair is
+   physics-identical by construction. Decide first whether it is a third
+   condition or replaces `occluded`. Roughly half a day: hours of scene.py +
+   test work, minutes of corpus, ~20 min GPU extraction, ~15 min probes.
+2. **Experiment G / H5.** Optional, last, ~4–6 GPU-hr.
+
+Practical notes for a fresh machine: the run artifacts live in
+`archive/full-run-2026-09-15/` (analysis via `physground.summarize` needs no
+corpus, no GPU, no mujoco). Rebuilding the corpus + features from seed 0 is
+§4.4 in full — measured on Unity: generation ~30 s × 20 CPU tasks per
+condition, all-encoder extraction 48 min on one L4, the probe grid 39 min on
+21 cores, Exp S 4h45 at 64 GB. The SLURM files under `slurm/` encode the
+working resource shapes; `extract_all.sbatch` runs every encoder sequentially
+on one GPU allocation (one queue wait), and `check.sbatch` is the
+generation→extraction bridge that stops the chain on an incomplete corpus.
 
 ---
 
 ## 10. Things I would check first if something looks wrong
 
-- Run `pytest tests/ -q`. 83 tests, ~9 s, no downloads. If any fail, fix that
+- Run `pytest tests/ -q`. 86 tests, ~9 s, no downloads. If any fail, fix that
   before trusting a number.
 - Run `python scripts/preflight_render.py`. Most rendering weirdness is this.
 - Run `python scripts/validate_occlusion.py`. Pearson r should be > 0.95
